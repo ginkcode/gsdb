@@ -4,7 +4,6 @@ use tokio::sync::Mutex;
 
 use crate::db::{Connection, DbPool, QueryResult};
 
-
 pub struct AppState {
     pub connections: Mutex<HashMap<String, Connection>>,
     pub pools: Mutex<HashMap<String, DbPool>>,
@@ -70,4 +69,14 @@ pub async fn list_tables(
     };
 
     pool.list_tables().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_system_theme() -> String {
+    match dark_light::detect() {
+        Ok(dark_light::Mode::Dark) => "dark".to_string(),
+        Ok(dark_light::Mode::Light) => "light".to_string(),
+        Ok(dark_light::Mode::Unspecified) => "light".to_string(),
+        Err(_) => "light".to_string(),
+    }
 }

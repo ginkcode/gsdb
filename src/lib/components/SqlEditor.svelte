@@ -4,9 +4,14 @@
   import { keymap } from "@codemirror/view";
   import { sql } from "@codemirror/lang-sql";
   import { oneDark } from "@codemirror/theme-one-dark";
-  import { Prec } from "@codemirror/state";
+  import { Prec, Compartment } from "@codemirror/state";
+  import { theme } from "$lib/stores/theme";
 
-  let { value = $bindable(""), onRun, runRef = $bindable() }: {
+  let {
+    value = $bindable(""),
+    onRun,
+    runRef = $bindable(),
+  }: {
     value?: string;
     onRun: (sql: string) => void;
     runRef?: () => void;
@@ -14,6 +19,7 @@
 
   let editorEl = $state<HTMLDivElement>();
   let view: EditorView;
+  let themeCompartment = new Compartment();
 
   /**
    * Returns positions of all semicolons that are not inside
@@ -26,15 +32,16 @@
       const ch = text[i];
       const next = text[i + 1];
       // line comment
-      if (ch === '-' && next === '-') {
+      if (ch === "-" && next === "-") {
         i += 2;
-        while (i < text.length && text[i] !== '\n') i++;
+        while (i < text.length && text[i] !== "\n") i++;
         continue;
       }
       // block comment
-      if (ch === '/' && next === '*') {
+      if (ch === "/" && next === "*") {
         i += 2;
-        while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+        while (i < text.length && !(text[i] === "*" && text[i + 1] === "/"))
+          i++;
         i += 2;
         continue;
       }
@@ -42,8 +49,14 @@
       if (ch === "'") {
         i++;
         while (i < text.length) {
-          if (text[i] === "'" && text[i + 1] === "'") { i += 2; continue; }
-          if (text[i] === "'") { i++; break; }
+          if (text[i] === "'" && text[i + 1] === "'") {
+            i += 2;
+            continue;
+          }
+          if (text[i] === "'") {
+            i++;
+            break;
+          }
           i++;
         }
         continue;
@@ -52,13 +65,19 @@
       if (ch === '"') {
         i++;
         while (i < text.length) {
-          if (text[i] === '"' && text[i + 1] === '"') { i += 2; continue; }
-          if (text[i] === '"') { i++; break; }
+          if (text[i] === '"' && text[i + 1] === '"') {
+            i += 2;
+            continue;
+          }
+          if (text[i] === '"') {
+            i++;
+            break;
+          }
           i++;
         }
         continue;
       }
-      if (ch === ';') result.push(i);
+      if (ch === ";") result.push(i);
       i++;
     }
     return result;
@@ -78,7 +97,7 @@
     while (effective > 0 && /\s/.test(text[effective])) effective--;
 
     // Find the semicolon that terminates the statement at the effective position.
-    const endIdx = bounds.findIndex(p => p >= effective);
+    const endIdx = bounds.findIndex((p) => p >= effective);
 
     if (endIdx === -1) {
       // Effective cursor is past all semicolons (last statement has no trailing semicolon).
@@ -99,21 +118,54 @@
   onMount(() => {
     runRef = runAtCursor;
 
+    // Light theme extension
+    const lightTheme = EditorView.theme(
+      {
+        "&": { background: "transparent !important" },
+        ".cm-gutters": {
+          background: "transparent !important",
+          borderRight: "1px solid rgba(0,0,0,0.1)",
+        },
+        ".cm-scroller": {
+          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+        },
+        ".cm-content": { color: "#1a1a1a" },
+        ".cm-cursor": { borderLeftColor: "#1a1a1a" },
+      },
+      { dark: false },
+    );
+
+    // Dark theme extension (using oneDark)
+    const darkTheme = EditorView.theme(
+      {
+        "&": { background: "transparent !important" },
+        ".cm-gutters": {
+          background: "transparent !important",
+          borderRight: "1px solid rgba(255,255,255,0.06)",
+        },
+        ".cm-scroller": {
+          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+        },
+      },
+      { dark: true },
+    );
+
+    const getThemeExtensions = () => {
+      // Check the actual applied theme class on the document
+      const isDark = document.documentElement.classList.contains("dark");
+      return isDark ? [oneDark, darkTheme] : [lightTheme];
+    };
+
     view = new EditorView({
       doc: value,
       extensions: [
         basicSetup,
         sql(),
-        oneDark,
+        themeCompartment.of(getThemeExtensions()),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             value = update.state.doc.toString();
           }
-        }),
-        EditorView.theme({
-          "&": { background: "transparent !important" },
-          ".cm-gutters": { background: "transparent !important", borderRight: "1px solid rgba(255,255,255,0.06)" },
-          ".cm-scroller": { fontFamily: "'JetBrains Mono', 'Fira Code', monospace" },
         }),
         Prec.highest(
           keymap.of([
@@ -124,13 +176,25 @@
                 return true;
               },
             },
-          ])
+          ]),
         ),
       ],
       parent: editorEl!,
     });
 
-    return () => view?.destroy();
+    // Listen for theme changes
+    const unsubscribe = theme.subscribe(() => {
+      if (view) {
+        view.dispatch({
+          effects: themeCompartment.reconfigure(getThemeExtensions()),
+        });
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      view?.destroy();
+    };
   });
 
   $effect(() => {
