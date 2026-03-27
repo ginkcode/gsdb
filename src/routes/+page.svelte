@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { Plus, Play, X, Database, ChevronRight } from "@lucide/svelte";
+  import { Plus, Play, X, Database, ChevronRight, ChevronDown, Table, Loader } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
   import * as ResizablePrimitive from "$lib/components/ui/resizable";
   import SqlEditor from "$lib/components/SqlEditor.svelte";
@@ -20,6 +20,31 @@
 
   let showConnectionForm = $state(false);
   let editorRun = $state<() => void>();
+
+  // Sidebar tree state
+  let expandedConnections = $state<Set<string>>(new Set());
+  let connectionTables = $state<Record<string, string[]>>({});
+  let loadingTables = $state<Set<string>>(new Set());
+
+  async function toggleConnection(connId: string) {
+    if (expandedConnections.has(connId)) {
+      expandedConnections = new Set([...expandedConnections].filter(id => id !== connId));
+    } else {
+      expandedConnections = new Set([...expandedConnections, connId]);
+      if (!connectionTables[connId]) {
+        loadingTables = new Set([...loadingTables, connId]);
+        try {
+          const tables: string[] = await invoke("list_tables", { connectionId: connId });
+          connectionTables = { ...connectionTables, [connId]: tables };
+        } catch (err) {
+          connectionTables = { ...connectionTables, [connId]: [] };
+          console.error("Failed to list tables:", err);
+        } finally {
+          loadingTables = new Set([...loadingTables].filter(id => id !== connId));
+        }
+      }
+    }
+  }
 
   const driverColors: Record<string, string> = {
     postgres: "bg-blue-500/15 text-blue-400 border-blue-500/20",
@@ -64,10 +89,12 @@
 </script>
 
 <!-- Force dark mode -->
-<div class="dark flex h-screen bg-background text-foreground overflow-hidden font-sans antialiased">
+<div class="dark h-screen bg-background text-foreground overflow-hidden font-sans antialiased">
+<ResizablePrimitive.PaneGroup direction="horizontal" class="h-full">
 
   <!-- Sidebar -->
-  <aside class="w-56 shrink-0 flex flex-col border-r border-border bg-background">
+  <ResizablePrimitive.Pane defaultSize={16} minSize={10} maxSize={35}>
+  <aside class="h-full flex flex-col border-r border-border bg-background">
     <div class="flex items-center justify-between px-4 py-3 border-b border-border">
       <div class="flex items-center gap-2">
         <Database class="w-4 h-4 text-primary" />
@@ -87,21 +114,62 @@
     <div class="px-2 py-2 flex-1 overflow-y-auto">
       <p class="px-2 mb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">Connections</p>
       {#each $connections as conn}
-        <button
-          class="w-full flex items-center gap-2.5 px-2 py-2 rounded-md text-sm transition-colors text-left
-            {$activeConnectionId === conn.id
-              ? 'bg-accent text-accent-foreground'
-              : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'}"
-          onclick={() => { activeConnectionId.set(conn.id); addTab(conn.id); }}
-        >
-          <span class="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border {driverColors[conn.driver]}">
-            {driverLabel[conn.driver]}
-          </span>
-          <span class="truncate">{conn.name}</span>
-          {#if $activeConnectionId === conn.id}
-            <ChevronRight class="ml-auto w-3.5 h-3.5 shrink-0 text-muted-foreground" />
-          {/if}
-        </button>
+        {@const isExpanded = expandedConnections.has(conn.id)}
+        {@const isLoading = loadingTables.has(conn.id)}
+        {@const tables = connectionTables[conn.id] ?? []}
+
+        <!-- Connection row -->
+        <div class="flex items-center gap-1 px-1 py-1 rounded-md group
+          {$activeConnectionId === conn.id ? 'bg-accent' : 'hover:bg-accent/40'}">
+
+          <!-- Expand/collapse toggle -->
+          <button
+            class="flex items-center gap-1.5 flex-1 min-w-0 text-left"
+            onclick={() => toggleConnection(conn.id)}
+          >
+            {#if isLoading}
+              <Loader class="w-3.5 h-3.5 shrink-0 text-muted-foreground animate-spin" />
+            {:else if isExpanded}
+              <ChevronDown class="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+            {:else}
+              <ChevronRight class="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+            {/if}
+            <span class="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border {driverColors[conn.driver]}">
+              {driverLabel[conn.driver]}
+            </span>
+            <span class="truncate text-sm
+              {$activeConnectionId === conn.id ? 'text-accent-foreground' : 'text-muted-foreground group-hover:text-foreground'}">
+              {conn.name}
+            </span>
+          </button>
+
+          <!-- New query tab button -->
+          <button
+            class="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-muted-foreground/20 transition-all"
+            title="New query tab"
+            onclick={() => { activeConnectionId.set(conn.id); addTab(conn.id); }}
+          >
+            <Plus class="w-3.5 h-3.5 text-muted-foreground" />
+          </button>
+        </div>
+
+        <!-- Table list -->
+        {#if isExpanded}
+          <div class="ml-4 mb-1">
+            {#if tables.length === 0 && !isLoading}
+              <p class="px-2 py-1 text-xs text-muted-foreground italic">No tables found</p>
+            {/if}
+            {#each tables as table}
+              <button
+                class="w-full flex items-center gap-2 px-2 py-1 rounded text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors text-left"
+                onclick={() => { activeConnectionId.set(conn.id); addTab(conn.id, `SELECT * FROM ${table} LIMIT 100;`); }}
+              >
+                <Table class="w-3 h-3 shrink-0" />
+                <span class="truncate">{table}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
       {/each}
 
       {#if $connections.length === 0}
@@ -114,9 +182,13 @@
       {/if}
     </div>
   </aside>
+  </ResizablePrimitive.Pane>
+
+  <ResizablePrimitive.Handle withHandle />
 
   <!-- Main area -->
-  <div class="flex-1 flex flex-col overflow-hidden">
+  <ResizablePrimitive.Pane defaultSize={84} minSize={50}>
+  <div class="h-full flex flex-col overflow-hidden">
 
     <!-- Tab bar -->
     <div class="flex items-stretch border-b border-border bg-background shrink-0 overflow-x-auto">
@@ -209,6 +281,9 @@
       </div>
     {/if}
   </div>
+  </ResizablePrimitive.Pane>
+
+</ResizablePrimitive.PaneGroup>
 </div>
 
 <ConnectionForm bind:open={showConnectionForm} onSave={saveConnection} />

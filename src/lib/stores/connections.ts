@@ -18,12 +18,12 @@ export const activeTab = derived(
     $queryTabs.find((t) => t.id === $activeTabId) ?? null
 );
 
-export function addTab(connectionId: string): QueryTab {
+export function addTab(connectionId: string, sql = ""): QueryTab {
   const tab: QueryTab = {
     id: crypto.randomUUID(),
     connectionId,
     title: "Query",
-    sql: "",
+    sql,
     isLoading: false,
   };
   queryTabs.update((tabs) => [...tabs, tab]);

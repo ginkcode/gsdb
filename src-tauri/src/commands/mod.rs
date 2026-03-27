@@ -4,6 +4,7 @@ use tokio::sync::Mutex;
 
 use crate::db::{Connection, DbPool, QueryResult};
 
+
 pub struct AppState {
     pub connections: Mutex<HashMap<String, Connection>>,
     pub pools: Mutex<HashMap<String, DbPool>>,
@@ -53,4 +54,20 @@ pub async fn run_query(
     };
 
     pool.run_query(&sql).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_tables(
+    connection_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let pool = {
+        let pools = state.pools.lock().await;
+        pools
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+            .clone()
+    };
+
+    pool.list_tables().await.map_err(|e| e.to_string())
 }

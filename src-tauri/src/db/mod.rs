@@ -83,6 +83,32 @@ impl DbPool {
             DbPool::Sqlite(pool)   => sqlite_query(pool, sql).await,
         }
     }
+
+    pub async fn list_tables(&self) -> Result<Vec<String>, sqlx::Error> {
+        match self {
+            DbPool::Postgres(pool) => {
+                let rows = sqlx::query(
+                    "SELECT table_name FROM information_schema.tables \
+                     WHERE table_schema = 'public' ORDER BY table_name"
+                )
+                .fetch_all(pool)
+                .await?;
+                Ok(rows.iter().map(|r| r.try_get::<String, _>(0).unwrap_or_default()).collect())
+            }
+            DbPool::Mysql(pool) => {
+                let rows = sqlx::query("SHOW TABLES").fetch_all(pool).await?;
+                Ok(rows.iter().map(|r| r.try_get::<String, _>(0).unwrap_or_default()).collect())
+            }
+            DbPool::Sqlite(pool) => {
+                let rows = sqlx::query(
+                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                )
+                .fetch_all(pool)
+                .await?;
+                Ok(rows.iter().map(|r| r.try_get::<String, _>(0).unwrap_or_default()).collect())
+            }
+        }
+    }
 }
 
 // ── PostgreSQL ────────────────────────────────────────────────────────────────
