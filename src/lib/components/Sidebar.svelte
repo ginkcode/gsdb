@@ -123,7 +123,7 @@
   >
     <div class="flex items-center gap-2">
       <Database class="w-4 h-4 text-primary" />
-      <span class="text-sm font-semibold tracking-tight">gs-data</span>
+      <span class="text-sm font-semibold tracking-tight">GSDB</span>
     </div>
     <div class="flex items-center gap-1">
       {#if header}{@render header()}{/if}

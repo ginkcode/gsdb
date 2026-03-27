@@ -1,6 +1,15 @@
-# Tauri + SvelteKit + TypeScript
+# GSDB
 
-This template should help get you started developing with Tauri, SvelteKit and TypeScript in Vite.
+A database management tool built with Tauri, SvelteKit, and TypeScript.
+
+## Features
+
+- Connect to PostgreSQL, MySQL, and SQLite databases
+- SSH tunnel support for secure connections
+- SQL editor with syntax highlighting
+- Query results with export to CSV
+- Connection persistence with secure password storage
+- Dark/Light theme support
 
 ## Recommended IDE Setup
 

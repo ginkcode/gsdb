@@ -1668,7 +1668,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gs-data-tool"
+name = "gsdb"
 version = "0.1.0"
 dependencies = [
  "bigdecimal",

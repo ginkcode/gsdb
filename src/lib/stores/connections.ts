@@ -5,7 +5,7 @@ import { getPassword, setPassword, deletePassword } from "tauri-plugin-keyring-a
 import type { Connection, QueryTab } from "../types";
 
 const CONNECTIONS_STORE_KEY = "saved-connections";
-const KEYRING_SERVICE = "gs-data-tool";
+const KEYRING_SERVICE = "gsdb";
 
 export const connections = writable<Connection[]>([]);
 export const activeConnectionId = writable<string | null>(null);
