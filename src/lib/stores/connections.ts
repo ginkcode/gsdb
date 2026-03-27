@@ -179,6 +179,17 @@ export async function updateConnection(conn: Connection): Promise<void> {
   }
 }
 
+// Reconnect a connection (useful when connection drops)
+export async function reconnectConnection(connId: string): Promise<void> {
+  try {
+    await invoke("reconnect_connection", { connectionId: connId });
+    console.log(`[Connections] Reconnected: ${connId}`);
+  } catch (err) {
+    console.error(`[Connections] Failed to reconnect ${connId}:`, err);
+    throw err;
+  }
+}
+
 export function addTab(connectionId: string, sql = "", title = "Query"): QueryTab {
   const tab: QueryTab = {
     id: crypto.randomUUID(),

@@ -1,5 +1,14 @@
 export type DbDriver = "postgres" | "mysql" | "sqlite";
 
+export interface SshTunnel {
+  host: string;
+  port: number;
+  username: string;
+  password?: string;
+  privateKey?: string;
+  privateKeyPassphrase?: string;
+}
+
 export interface Connection {
   id: string;
   name: string;
@@ -10,6 +19,7 @@ export interface Connection {
   username?: string;
   password?: string;
   filePath?: string; // for SQLite
+  ssh?: SshTunnel; // SSH tunnel configuration
 }
 
 export interface QueryResult {

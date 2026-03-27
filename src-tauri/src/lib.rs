@@ -1,7 +1,9 @@
 mod commands;
 mod db;
 
-use commands::{add_connection, get_system_theme, list_tables, run_query, AppState};
+use commands::{
+    add_connection, get_system_theme, list_tables, reconnect_connection, run_query, AppState,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -9,9 +11,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_keyring::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             add_connection,
+            reconnect_connection,
             run_query,
             list_tables,
             get_system_theme

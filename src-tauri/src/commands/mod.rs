@@ -38,6 +38,30 @@ pub async fn add_connection(
 }
 
 #[tauri::command]
+pub async fn reconnect_connection(
+    connection_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // Get the connection config
+    let connection = {
+        let connections = state.connections.lock().await;
+        connections
+            .get(&connection_id)
+            .cloned()
+            .ok_or_else(|| "Connection not found".to_string())?
+    };
+
+    // Create a new pool
+    let pool = DbPool::connect(&connection)
+        .await
+        .map_err(|e| format!("Failed to reconnect: {}", e))?;
+
+    // Replace the old pool
+    state.pools.lock().await.insert(connection_id, pool);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn run_query(
     connection_id: String,
     sql: String,

@@ -1,8 +1,21 @@
 <script lang="ts">
+  import { save } from "@tauri-apps/plugin-dialog";
+  import { writeFile } from "@tauri-apps/plugin-fs";
+  import { downloadDir } from "@tauri-apps/api/path";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
+  import { Download } from "@lucide/svelte";
+  import { Button } from "$lib/components/ui/button";
   import type { QueryResult } from "$lib/types";
 
-  let { result }: { result: QueryResult } = $props();
+  let {
+    result,
+    selectedRow,
+    onRowSelect,
+  }: {
+    result: QueryResult;
+    selectedRow: Record<string, unknown> | null;
+    onRowSelect: (row: Record<string, unknown>) => void;
+  } = $props();
 
   function formatValue(value: unknown): string {
     if (value === null || value === undefined) {
@@ -29,6 +42,53 @@
       full: text,
       truncated: true,
     };
+  }
+
+  function isRowSelected(row: Record<string, unknown>): boolean {
+    if (!selectedRow) return false;
+    return result.columns.every((col) => row[col] === selectedRow[col]);
+  }
+
+  function escapeCSVField(value: string): string {
+    if (value.includes(",") || value.includes('"') || value.includes("\n")) {
+      return `"${value.replace(/"/g, '""')}"`;
+    }
+    return value;
+  }
+
+  async function exportToCSV() {
+    const headers = result.columns.map(escapeCSVField).join(",");
+    const rows = result.rows.map((row) =>
+      result.columns
+        .map((col) => escapeCSVField(formatValue(row[col])))
+        .join(","),
+    );
+    const csv = [headers, ...rows].join("\n");
+    const encoder = new TextEncoder();
+    const csvBytes = encoder.encode(csv);
+
+    const defaultName = `query-results-${new Date().toISOString().slice(0, 10)}.csv`;
+    const downloadsPath = await downloadDir();
+
+    try {
+      const filePath = await save({
+        defaultPath: downloadsPath
+          ? `${downloadsPath}/${defaultName}`
+          : defaultName,
+        filters: [
+          {
+            name: "CSV",
+            extensions: ["csv"],
+          },
+        ],
+      });
+
+      if (filePath) {
+        await writeFile(filePath, csvBytes);
+      }
+    } catch (err) {
+      console.error("Failed to save CSV:", err);
+    }
   }
 </script>
 
@@ -60,7 +120,12 @@
         <tbody>
           {#each result.rows as row, i}
             <tr
-              class="border-b border-border/50 hover:bg-muted/40 transition-colors"
+              class="border-b border-border/50 hover:bg-muted/40 transition-colors cursor-pointer {isRowSelected(
+                row,
+              )
+                ? 'bg-accent'
+                : ''}"
+              onclick={() => onRowSelect(row)}
             >
               {#each result.columns as col}
                 {@const value = formatValue(row[col])}
@@ -85,10 +150,21 @@
       </table>
     </ScrollArea>
     <div
-      class="px-3 py-1.5 text-xs text-muted-foreground border-t border-border shrink-0"
+      class="flex items-center justify-between px-3 py-1.5 text-xs text-muted-foreground border-t border-border shrink-0"
     >
-      {result.rows.length}
-      {result.rows.length === 1 ? "row" : "rows"}
+      <span>
+        {result.rows.length}
+        {result.rows.length === 1 ? "row" : "rows"}
+      </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        class="h-6 gap-1.5 text-xs"
+        onclick={exportToCSV}
+      >
+        <Download class="w-3 h-3" />
+        Export CSV
+      </Button>
     </div>
   </div>
 {/if}
