@@ -7,6 +7,8 @@ use commands::{add_connection, get_system_theme, list_tables, run_query, AppStat
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_keyring::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             add_connection,

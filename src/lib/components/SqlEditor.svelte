@@ -161,6 +161,7 @@
       extensions: [
         basicSetup,
         sql(),
+        EditorView.lineWrapping,
         themeCompartment.of(getThemeExtensions()),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {

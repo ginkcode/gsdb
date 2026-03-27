@@ -5,8 +5,13 @@
   import { Input } from "$lib/components/ui/input";
   import type { Connection, DbDriver } from "$lib/types";
 
-  let { open = $bindable(false), onSave }: {
+  let {
+    open = $bindable(false),
+    editing = $bindable(null as Connection | null),
+    onSave,
+  }: {
     open: boolean;
+    editing: Connection | null;
     onSave: (conn: Connection) => void;
   } = $props();
 
@@ -25,6 +30,33 @@
     sqlite: 0,
   };
 
+  // Reset form when dialog opens/closes or editing changes
+  $effect(() => {
+    if (open) {
+      if (editing) {
+        // Populate form with existing connection data
+        driver = editing.driver;
+        name = editing.name;
+        host = editing.host ?? "localhost";
+        port = editing.port ?? defaultPorts[editing.driver];
+        database = editing.database;
+        username = editing.username ?? "";
+        password = editing.password ?? "";
+        filePath = editing.filePath ?? "";
+      } else {
+        // Reset to defaults for new connection
+        driver = "postgres";
+        name = "";
+        host = "localhost";
+        port = 5432;
+        database = "";
+        username = "";
+        password = "";
+        filePath = "";
+      }
+    }
+  });
+
   function onDriverChange(v: string | undefined) {
     if (!v) return;
     driver = v as DbDriver;
@@ -33,7 +65,7 @@
 
   function submit() {
     const conn: Connection = {
-      id: crypto.randomUUID(),
+      id: editing?.id ?? crypto.randomUUID(),
       name: name || `${driver}/${database}`,
       driver,
       database,
@@ -48,8 +80,14 @@
 <Dialog.Root bind:open>
   <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
-      <Dialog.Title>New Connection</Dialog.Title>
-      <Dialog.Description>Connect to a database</Dialog.Description>
+      <Dialog.Title
+        >{editing ? "Edit Connection" : "New Connection"}</Dialog.Title
+      >
+      <Dialog.Description
+        >{editing
+          ? "Update connection settings"
+          : "Connect to a database"}</Dialog.Description
+      >
     </Dialog.Header>
 
     <div class="grid gap-4 py-2">
@@ -60,9 +98,17 @@
 
       <div class="grid gap-1.5">
         <label class="text-sm font-medium" for="conn-driver">Driver</label>
-        <Select.Root type="single" value={driver} onValueChange={onDriverChange}>
+        <Select.Root
+          type="single"
+          value={driver}
+          onValueChange={onDriverChange}
+        >
           <Select.Trigger id="conn-driver">
-            {driver === "postgres" ? "PostgreSQL" : driver === "mysql" ? "MySQL" : "SQLite"}
+            {driver === "postgres"
+              ? "PostgreSQL"
+              : driver === "mysql"
+                ? "MySQL"
+                : "SQLite"}
           </Select.Trigger>
           <Select.Content>
             <Select.Item value="postgres">PostgreSQL</Select.Item>
@@ -100,7 +146,11 @@
       {:else}
         <div class="grid gap-1.5">
           <label class="text-sm font-medium" for="conn-path">File Path</label>
-          <Input id="conn-path" bind:value={filePath} placeholder="/path/to/db.sqlite" />
+          <Input
+            id="conn-path"
+            bind:value={filePath}
+            placeholder="/path/to/db.sqlite"
+          />
         </div>
       {/if}
     </div>

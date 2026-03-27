@@ -38,3 +38,5 @@ chrono = { version = "0.4", features = ["serde"] }
 bigdecimal = "0.4"
 hex = "0.4"
 dark-light = "2"
+tauri-plugin-store = "2.4.2"
+tauri-plugin-keyring = "0.1.0"
