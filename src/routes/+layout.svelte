@@ -2,6 +2,7 @@
     import "./layout.css";
     import { theme, getSystemTheme } from "$lib/stores/theme";
     import { onMount } from "svelte";
+    import { Toaster } from "$lib/components/ui/sonner";
 
     const { children } = $props();
 
@@ -61,4 +62,5 @@
     });
 </script>
 
+<Toaster />
 {@render children()}

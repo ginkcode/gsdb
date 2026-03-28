@@ -279,6 +279,136 @@ impl DbPool {
             }
         }
     }
+
+    pub async fn get_table_definition(&self, table_name: &str) -> Result<String, sqlx::Error> {
+        match self {
+            DbPool::Postgres(pool) => {
+                // Get table schema
+                let rows = sqlx::query(
+                    "SELECT column_name, data_type, is_nullable, column_default, \
+                     character_maximum_length, numeric_precision, numeric_scale \
+                     FROM information_schema.columns \
+                     WHERE table_schema = 'public' AND table_name = $1 \
+                     ORDER BY ordinal_position",
+                )
+                .bind(table_name)
+                .fetch_all(pool)
+                .await?;
+
+                let mut columns: Vec<String> = Vec::new();
+                for row in rows {
+                    let col_name: String = row.try_get(0)?;
+                    let data_type: String = row.try_get(1)?;
+                    let is_nullable: String = row.try_get(2)?;
+                    let column_default: Option<String> = row.try_get(3)?;
+                    let char_max_len: Option<i32> = row.try_get(4)?;
+                    let num_precision: Option<i32> = row.try_get(5)?;
+                    let num_scale: Option<i32> = row.try_get(6)?;
+
+                    // Build type string
+                    let full_type = if let Some(len) = char_max_len {
+                        format!("{}({})", data_type, len)
+                    } else if let Some(prec) = num_precision {
+                        if let Some(scale) = num_scale {
+                            if scale > 0 {
+                                format!("{}({}, {})", data_type, prec, scale)
+                            } else {
+                                format!("{}({})", data_type, prec)
+                            }
+                        } else {
+                            data_type.clone()
+                        }
+                    } else {
+                        data_type.clone()
+                    };
+
+                    let mut col_def = format!("    \"{}\" {}", col_name, full_type);
+                    if is_nullable == "NO" {
+                        col_def.push_str(" NOT NULL");
+                    }
+                    if let Some(default) = column_default {
+                        col_def.push_str(&format!(" DEFAULT {}", default));
+                    }
+                    columns.push(col_def);
+                }
+
+                // Get primary key
+                let pk_rows = sqlx::query(
+                    "SELECT a.attname \
+                     FROM pg_index i \
+                     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) \
+                     WHERE i.indrelid = $1::regclass AND i.indisprimary",
+                )
+                .bind(format!("\"public\".\"{}\"", table_name))
+                .fetch_all(pool)
+                .await?;
+
+                let pk_columns: Vec<String> = pk_rows
+                    .iter()
+                    .filter_map(|r| r.try_get::<String, _>(0).ok())
+                    .collect();
+
+                let mut result = format!(
+                    "-- Table Definition\nCREATE TABLE \"public\".\"{}\" (\n{}\n);",
+                    table_name,
+                    columns.join(",\n")
+                );
+
+                if !pk_columns.is_empty() {
+                    let pk_def = format!(
+                        ",\n    PRIMARY KEY ({})",
+                        pk_columns
+                            .iter()
+                            .map(|c| format!("\"{}\"", c))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                    // Insert before the closing parenthesis
+                    result = format!(
+                        "-- Table Definition\nCREATE TABLE \"public\".\"{}\" (\n{}{}\n);",
+                        table_name,
+                        columns.join(",\n"),
+                        pk_def
+                    );
+                }
+
+                Ok(result)
+            }
+            DbPool::Mysql(pool) => {
+                let rows = sqlx::query(&format!("SHOW CREATE TABLE `{}`", table_name))
+                    .fetch_all(pool)
+                    .await?;
+
+                if let Some(row) = rows.first() {
+                    let create_stmt: String = row.try_get(1)?;
+                    Ok(format!(
+                        "-- Table Definition\n{};",
+                        create_stmt.trim_end_matches(';')
+                    ))
+                } else {
+                    Err(sqlx::Error::RowNotFound)
+                }
+            }
+            DbPool::Sqlite(pool) => {
+                let rows = sqlx::query(&format!(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?"
+                ))
+                .bind(table_name)
+                .fetch_all(pool)
+                .await?;
+
+                if let Some(row) = rows.first() {
+                    let create_stmt: String = row.try_get(0)?;
+                    Ok(format!(
+                        "-- Table Definition\n{};",
+                        create_stmt.trim_end_matches(';')
+                    ))
+                } else {
+                    Err(sqlx::Error::RowNotFound)
+                }
+            }
+        }
+    }
 }
 
 // ── PostgreSQL ────────────────────────────────────────────────────────────────

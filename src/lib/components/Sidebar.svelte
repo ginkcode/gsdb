@@ -1,6 +1,11 @@
 <script lang="ts">
     import { invoke } from "@tauri-apps/api/core";
+    import { onMount } from "svelte";
     import type { Snippet } from "svelte";
+    import { EditorView } from "@codemirror/view";
+    import { sql } from "@codemirror/lang-sql";
+    import { oneDark } from "@codemirror/theme-one-dark";
+    import { toast } from "svelte-sonner";
     import {
         Plus,
         Database,
@@ -11,9 +16,12 @@
         Pencil,
         Trash2,
         RefreshCw,
+        Info,
+        Copy,
     } from "@lucide/svelte";
     import { Button } from "$lib/components/ui/button";
     import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
+    import * as Dialog from "$lib/components/ui/dialog";
     import {
         connections,
         activeConnectionId,
@@ -41,6 +49,14 @@
     let connectionTables = $state<Record<string, string[]>>({});
     let loadingTables = $state<Set<string>>(new Set());
     let reconnectingConnections = $state<Set<string>>(new Set());
+
+    // Table info dialog state
+    let tableInfoOpen = $state(false);
+    let tableInfoName = $state("");
+    let tableInfoDefinition = $state("");
+    let tableInfoLoading = $state(false);
+    let tableInfoEditorEl = $state<HTMLDivElement>();
+    let tableInfoEditor: EditorView | null = null;
 
     const driverColors: Record<string, string> = {
         postgres: "bg-blue-500/15 text-blue-400 border-blue-500/20",
@@ -119,6 +135,63 @@
             );
         }
     }
+
+    async function showTableInfo(connId: string, tableName: string) {
+        tableInfoName = tableName;
+        tableInfoDefinition = "";
+        tableInfoLoading = true;
+        tableInfoOpen = true;
+
+        try {
+            const definition: string = await invoke("get_table_definition", {
+                connectionId: connId,
+                tableName: tableName,
+            });
+            tableInfoDefinition = definition;
+        } catch (err) {
+            tableInfoDefinition = `Error: ${err}`;
+        } finally {
+            tableInfoLoading = false;
+        }
+    }
+
+    async function copyTableDefinition() {
+        if (tableInfoDefinition) {
+            await navigator.clipboard.writeText(tableInfoDefinition);
+            toast.success("Copied");
+        }
+    }
+
+    // Effect to update CodeMirror editor when definition changes
+    $effect(() => {
+        if (
+            tableInfoOpen &&
+            tableInfoEditorEl &&
+            tableInfoDefinition &&
+            !tableInfoLoading
+        ) {
+            // Destroy existing editor if any
+            if (tableInfoEditor) {
+                tableInfoEditor.destroy();
+            }
+            // Create new editor - minimal setup without line numbers, read-only
+            tableInfoEditor = new EditorView({
+                doc: tableInfoDefinition,
+                extensions: [
+                    sql(),
+                    oneDark,
+                    EditorView.editable.of(false),
+                    EditorView.lineWrapping,
+                ],
+                parent: tableInfoEditorEl,
+            });
+        }
+        // Cleanup when dialog closes
+        if (!tableInfoOpen && tableInfoEditor) {
+            tableInfoEditor.destroy();
+            tableInfoEditor = null;
+        }
+    });
 
     export function refreshConnectionTables(connId: string) {
         refreshTables(connId);
@@ -316,19 +389,52 @@
                         </p>
                     {/if}
                     {#each tables as table}
-                        <button
-                            class="w-full flex items-center gap-2 px-2 py-1 rounded text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors text-left"
-                            onclick={() => {
-                                openTableTab(
-                                    conn.id,
-                                    table,
-                                    `SELECT * FROM ${table} LIMIT 100;`,
-                                );
-                            }}
-                        >
-                            <Table class="w-3 h-3 shrink-0" />
-                            <span class="truncate">{table}</span>
-                        </button>
+                        <div class="group flex items-center gap-1">
+                            <button
+                                class="flex-1 flex items-center gap-2 px-2 py-1 rounded text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors text-left"
+                                onclick={() => {
+                                    openTableTab(
+                                        conn.id,
+                                        table,
+                                        `SELECT * FROM ${table} LIMIT 100;`,
+                                    );
+                                }}
+                            >
+                                <Table class="w-3 h-3 shrink-0" />
+                                <span class="truncate">{table}</span>
+                            </button>
+                            <!-- Table context menu -->
+                            <DropdownMenu.Root>
+                                <DropdownMenu.Trigger>
+                                    <button
+                                        class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-muted-foreground/20 transition-all"
+                                        title="Table options"
+                                    >
+                                        <svg
+                                            class="w-3 h-3 text-muted-foreground"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <circle cx="12" cy="5" r="1" />
+                                            <circle cx="12" cy="12" r="1" />
+                                            <circle cx="12" cy="19" r="1" />
+                                        </svg>
+                                    </button>
+                                </DropdownMenu.Trigger>
+                                <DropdownMenu.Content class="min-w-32">
+                                    <DropdownMenu.Item
+                                        class="flex items-center gap-2 cursor-pointer"
+                                        onclick={() =>
+                                            showTableInfo(conn.id, table)}
+                                    >
+                                        <Info class="w-4 h-4" />
+                                        <span>Info</span>
+                                    </DropdownMenu.Item>
+                                </DropdownMenu.Content>
+                            </DropdownMenu.Root>
+                        </div>
                     {/each}
                 </div>
             {/if}
@@ -343,4 +449,66 @@
             </button>
         {/if}
     </div>
+
+    <!-- Table Info Dialog -->
+    <Dialog.Root bind:open={tableInfoOpen}>
+        <Dialog.Content
+            class="sm:max-w-3xl max-h-[85vh] overflow-hidden flex flex-col w-full"
+        >
+            <Dialog.Header>
+                <Dialog.Title
+                    >Table: <strong>{tableInfoName}</strong></Dialog.Title
+                >
+            </Dialog.Header>
+            <div class="flex-1 overflow-auto">
+                {#if tableInfoLoading}
+                    <div class="flex items-center justify-center py-8">
+                        <Loader
+                            class="w-6 h-6 animate-spin text-muted-foreground"
+                        />
+                    </div>
+                {:else if tableInfoDefinition}
+                    <div
+                        bind:this={tableInfoEditorEl}
+                        class="cm-editor-wrapper"
+                    ></div>
+                {/if}
+            </div>
+            <Dialog.Footer>
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    onclick={copyTableDefinition}
+                    disabled={!tableInfoDefinition || tableInfoLoading}
+                    title="Copy to clipboard"
+                >
+                    <Copy class="w-4 h-4" />
+                </Button>
+                <Button
+                    variant="outline"
+                    onclick={() => (tableInfoOpen = false)}>Close</Button
+                >
+            </Dialog.Footer>
+        </Dialog.Content>
+    </Dialog.Root>
 </aside>
+
+<style>
+    .cm-editor-wrapper :global(.cm-editor) {
+        background: transparent;
+        font-size: 0.875rem;
+        height: auto;
+        min-height: 200px;
+    }
+    .cm-editor-wrapper :global(.cm-editor .cm-scroller) {
+        font-family:
+            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+            "Liberation Mono", "Courier New", monospace;
+    }
+    .cm-editor-wrapper :global(.cm-editor .cm-content) {
+        padding: 0;
+    }
+    .cm-editor-wrapper :global(.cm-editor .cm-line) {
+        padding: 0;
+    }
+</style>

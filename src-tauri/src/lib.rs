@@ -2,7 +2,8 @@ mod commands;
 mod db;
 
 use commands::{
-    add_connection, get_system_theme, list_tables, reconnect_connection, run_query, AppState,
+    add_connection, get_system_theme, get_table_definition, list_tables, reconnect_connection,
+    run_query, AppState,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -19,6 +20,7 @@ pub fn run() {
             reconnect_connection,
             run_query,
             list_tables,
+            get_table_definition,
             get_system_theme
         ])
         .run(tauri::generate_context!())

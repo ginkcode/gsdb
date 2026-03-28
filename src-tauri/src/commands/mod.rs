@@ -104,3 +104,22 @@ pub fn get_system_theme() -> String {
         Err(_) => "light".to_string(),
     }
 }
+
+#[tauri::command]
+pub async fn get_table_definition(
+    connection_id: String,
+    table_name: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let pool = {
+        let pools = state.pools.lock().await;
+        pools
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+            .clone()
+    };
+
+    pool.get_table_definition(&table_name)
+        .await
+        .map_err(|e| e.to_string())
+}
