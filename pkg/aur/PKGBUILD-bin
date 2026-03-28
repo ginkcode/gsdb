@@ -1,0 +1,32 @@
+# Maintainer: Gink <ginkcode@gmail.com>
+pkgname=gsdb-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A database management tool for PostgreSQL, MySQL, and SQLite (pre-built binary)"
+arch=('x86_64')
+url="https://github.com/ginkcode/gsdb"
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'openssl' 'libssh2')
+provides=('gsdb')
+conflicts=('gsdb')
+source=("https://github.com/ginkcode/gsdb/releases/download/v$pkgver/GSDB-x86_64.AppImage")
+sha256sums=('SKIP')
+
+package() {
+    # Install the AppImage
+    install -Dm755 "GSDB-x86_64.AppImage" "$pkgdir/usr/bin/gsdb"
+    
+    # Install desktop entry
+    install -Dm644 "/dev/stdin" "$pkgdir/usr/share/applications/gsdb.desktop" <<EOF
+[Desktop Entry]
+Name=GSDB
+Comment=Database management tool for PostgreSQL, MySQL, and SQLite
+Exec=gsdb
+Icon=gsdb
+Terminal=false
+Type=Application
+Categories=Development;Database;Utility;
+StartupWMClass=gsdb
+Keywords=database;sql;postgresql;mysql;sqlite;
+EOF
+}
