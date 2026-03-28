@@ -131,6 +131,14 @@ yay -Ss gsdb
 
 The PKGBUILD explicitly sets `--target-dir target` so the binary is always at `src-tauri/target/release/gsdb` regardless of the user's `CARGO_TARGET_DIR` environment variable.
 
+### UI appears unstyled / missing CSS (source build only)
+
+**Symptom:** The app launches but shows plain unstyled HTML — text visible, no layout or colors.
+
+**Root cause:** Tailwind CSS v4 uses automatic source detection to find which utility classes to generate. This detection relies on `.git` to locate the project root. AUR tarballs are extracted without `.git`, so Tailwind falls back to a minimal scan and produces a ~16 kB CSS file instead of the expected ~61 kB.
+
+**Fix:** `src/routes/layout.css` contains an explicit `@source "../";` directive that tells Tailwind to always scan the `src/` directory regardless of whether `.git` is present. If CSS generation ever looks too small in an AUR build, verify this directive is still in that file.
+
 ### AppImage download fails in gsdb-bin
 
 Ensure the GitHub release exists and that the version in `PKGBUILD-bin` matches the release tag. Run `make release` before `make aur-deploy`.
