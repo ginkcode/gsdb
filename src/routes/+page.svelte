@@ -1,5 +1,6 @@
 <script lang="ts">
     import { invoke } from "@tauri-apps/api/core";
+    import { getCurrentWindow } from "@tauri-apps/api/window";
     import { onMount } from "svelte";
     import { Plus, Database } from "@lucide/svelte";
     import { Button } from "$lib/components/ui/button";
@@ -12,6 +13,7 @@
     import RowDetailPanel from "$lib/components/RowDetailPanel.svelte";
     import ConnectionForm from "$lib/components/ConnectionForm.svelte";
     import ThemeToggle from "$lib/components/ThemeToggle.svelte";
+    import TitleBar from "$lib/components/TitleBar.svelte";
     import {
         connections,
         activeConnectionId,
@@ -37,10 +39,20 @@
     let renameValue = $state("");
     let selectedRow = $state<Record<string, unknown> | null>(null);
     let showDetailPanel = $state(true);
+    let isMaximized = $state(false);
 
     // Load saved connections on mount
-    onMount(() => {
+    onMount((): (() => void) => {
         loadSavedConnections();
+
+        const appWindow = getCurrentWindow();
+        let unlisten: (() => void) | undefined;
+        (async () => {
+            isMaximized = await appWindow.isMaximized();
+            unlisten = await appWindow.onResized(async () => {
+                isMaximized = await appWindow.isMaximized();
+            });
+        })();
 
         // Handle keyboard shortcuts for closing tabs
         function handleKeyDown(e: KeyboardEvent) {
@@ -55,7 +67,10 @@
         }
 
         window.addEventListener("keydown", handleKeyDown);
-        return () => window.removeEventListener("keydown", handleKeyDown);
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown);
+            unlisten?.();
+        };
     });
 
     async function saveConnection(conn: Connection) {
@@ -130,11 +145,16 @@
 
 <!-- Theme-aware root -->
 <div
-    class="h-screen bg-background text-foreground overflow-hidden font-sans antialiased"
+    class="h-screen bg-background text-foreground overflow-hidden font-sans antialiased flex flex-col {isMaximized
+        ? 'rounded-none'
+        : 'rounded-lg'}"
 >
-    <ResizablePrimitive.PaneGroup direction="horizontal" class="h-full">
+    <!-- Custom Title Bar -->
+    <TitleBar />
+
+    <ResizablePrimitive.PaneGroup direction="horizontal" class="flex-1 min-h-0">
         <!-- Sidebar -->
-        <ResizablePrimitive.Pane defaultSize={16} minSize={10} maxSize={35}>
+        <ResizablePrimitive.Pane defaultSize={22} minSize={10} maxSize={35}>
             <Sidebar
                 onEditConnection={handleEditConnection}
                 onDeleteConnection={handleDeleteConnection}
@@ -150,7 +170,7 @@
         <ResizablePrimitive.Handle withHandle />
 
         <!-- Main area -->
-        <ResizablePrimitive.Pane defaultSize={84} minSize={50}>
+        <ResizablePrimitive.Pane defaultSize={78} minSize={50}>
             <div class="h-full flex flex-col overflow-hidden">
                 <!-- Tab bar -->
                 <TabBar />
