@@ -95,6 +95,7 @@ clean:
 aur:
 	@echo "Updating AUR .SRCINFO files..."
 	cd pkg/aur && makepkg --printsrcinfo > .SRCINFO
+	cd pkg/aur && cp PKGBUILD PKGBUILD.bak && cp PKGBUILD-bin PKGBUILD && makepkg --printsrcinfo > .SRCINFO-bin && mv PKGBUILD.bak PKGBUILD
 	@echo "AUR files updated. Copy them to the AUR repository to publish."
 
 install:
