@@ -2,6 +2,8 @@
 @import "tw-animate-css";
 @import "@fontsource-variable/inter";
 
+@source "../";
+
 /* CodeMirror overrides */
 .cm-editor {
   height: 100%;
