@@ -199,7 +199,12 @@
                             <RowDetailPanel
                                 row={selectedRow}
                                 {columns}
+                                connectionId={$activeTab?.connectionId}
+                                tableName={$activeTab?.title !== "Query" ? $activeTab?.title : undefined}
                                 onClose={handleCloseDetailPanel}
+                                onUpdateSuccess={() => {
+                                    if ($activeTab) runQuery($activeTab.id, $activeTab.sql);
+                                }}
                             />
                         </ResizablePrimitive.Pane>
                     {/if}

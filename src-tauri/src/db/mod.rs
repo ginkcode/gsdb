@@ -453,14 +453,24 @@ async fn pg_query(pool: &sqlx::PgPool, sql: &str) -> Result<QueryResult, sqlx::E
 fn pg_value(row: &sqlx::postgres::PgRow, idx: usize) -> Value {
     let type_name = row.columns()[idx].type_info().name().to_lowercase();
 
-    // integers
-    if matches!(
-        type_name.as_str(),
-        "int2" | "int4" | "int8" | "serial" | "bigserial"
-    ) {
-        if let Ok(v) = row.try_get::<i64, _>(idx) {
-            return Value::Number(v.into());
+    // integers — each pg integer type maps to a specific Rust type in sqlx
+    match type_name.as_str() {
+        "int2" => {
+            if let Ok(v) = row.try_get::<i16, _>(idx) {
+                return Value::Number(i64::from(v).into());
+            }
         }
+        "int4" | "serial" => {
+            if let Ok(v) = row.try_get::<i32, _>(idx) {
+                return Value::Number(i64::from(v).into());
+            }
+        }
+        "int8" | "bigserial" => {
+            if let Ok(v) = row.try_get::<i64, _>(idx) {
+                return Value::Number(v.into());
+            }
+        }
+        _ => {}
     }
     // floats
     if matches!(
