@@ -9,8 +9,14 @@ license=('MIT')
 depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'openssl' 'libssh2')
 provides=('gsdb')
 conflicts=('gsdb')
-source=("https://github.com/ginkcode/gsdb/releases/download/v$pkgver/GSDB-x86_64.AppImage")
-sha256sums=('SKIP')
+source=(
+    "https://github.com/ginkcode/gsdb/releases/download/v$pkgver/GSDB-x86_64.AppImage"
+    "https://raw.githubusercontent.com/ginkcode/gsdb/v$pkgver/src-tauri/icons/32x32.png"
+    "https://raw.githubusercontent.com/ginkcode/gsdb/v$pkgver/src-tauri/icons/128x128.png"
+    "https://raw.githubusercontent.com/ginkcode/gsdb/v$pkgver/src-tauri/icons/128x128@2x.png"
+    "https://raw.githubusercontent.com/ginkcode/gsdb/v$pkgver/src-tauri/icons/icon.png"
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 package() {
     # Install the AppImage
@@ -29,4 +35,10 @@ Categories=Development;Database;Utility;
 StartupWMClass=gsdb
 Keywords=database;sql;postgresql;mysql;sqlite;
 EOF
+
+    # Install icons
+    install -Dm644 "32x32.png" "$pkgdir/usr/share/icons/hicolor/32x32/apps/gsdb.png"
+    install -Dm644 "128x128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/gsdb.png"
+    install -Dm644 "128x128@2x.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/gsdb.png"
+    install -Dm644 "icon.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/gsdb.png"
 }
