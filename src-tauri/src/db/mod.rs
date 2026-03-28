@@ -285,7 +285,7 @@ impl DbPool {
             DbPool::Postgres(pool) => {
                 // Get table schema
                 let rows = sqlx::query(
-                    "SELECT column_name, data_type, is_nullable, column_default, \
+                    "SELECT column_name, udt_name, is_nullable, column_default, \
                      character_maximum_length, numeric_precision, numeric_scale \
                      FROM information_schema.columns \
                      WHERE table_schema = 'public' AND table_name = $1 \
@@ -298,28 +298,34 @@ impl DbPool {
                 let mut columns: Vec<String> = Vec::new();
                 for row in rows {
                     let col_name: String = row.try_get(0)?;
-                    let data_type: String = row.try_get(1)?;
+                    let udt_name: String = row.try_get(1)?;
                     let is_nullable: String = row.try_get(2)?;
                     let column_default: Option<String> = row.try_get(3)?;
                     let char_max_len: Option<i32> = row.try_get(4)?;
                     let num_precision: Option<i32> = row.try_get(5)?;
                     let num_scale: Option<i32> = row.try_get(6)?;
 
-                    // Build type string
-                    let full_type = if let Some(len) = char_max_len {
-                        format!("{}({})", data_type, len)
-                    } else if let Some(prec) = num_precision {
-                        if let Some(scale) = num_scale {
-                            if scale > 0 {
-                                format!("{}({}, {})", data_type, prec, scale)
+                    // Build type string using udt_name (PostgreSQL internal aliases like
+                    // int4, int8, bool, timestamp) — only append modifiers for types
+                    // that genuinely require them (varchar length, numeric precision/scale).
+                    let full_type = match udt_name.as_str() {
+                        "varchar" | "bpchar" => {
+                            if let Some(len) = char_max_len {
+                                format!("{}({})", udt_name, len)
                             } else {
-                                format!("{}({})", data_type, prec)
+                                udt_name.clone()
                             }
-                        } else {
-                            data_type.clone()
                         }
-                    } else {
-                        data_type.clone()
+                        "numeric" => {
+                            match (num_precision, num_scale) {
+                                (Some(prec), Some(scale)) if scale > 0 => {
+                                    format!("{}({}, {})", udt_name, prec, scale)
+                                }
+                                (Some(prec), _) => format!("{}({})", udt_name, prec),
+                                _ => udt_name.clone(),
+                            }
+                        }
+                        _ => udt_name.clone(),
                     };
 
                     let mut col_def = format!("    \"{}\" {}", col_name, full_type);
