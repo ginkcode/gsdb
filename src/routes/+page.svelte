@@ -147,7 +147,7 @@
 <div
     class="h-screen bg-background text-foreground overflow-hidden font-sans antialiased flex flex-col {isMaximized
         ? 'rounded-none'
-        : 'rounded-lg'}"
+        : 'rounded-lg border border-border'}"
 >
     <!-- Custom Title Bar -->
     <TitleBar />
