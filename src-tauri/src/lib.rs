@@ -2,8 +2,8 @@ mod commands;
 mod db;
 
 use commands::{
-    add_connection, get_system_theme, get_table_definition, list_tables, reconnect_connection,
-    run_query, AppState,
+    add_connection, export_database, export_table, get_system_theme, get_table_definition,
+    import_sql, list_tables, read_file_preview, reconnect_connection, run_query, AppState,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -22,7 +22,11 @@ pub fn run() {
             run_query,
             list_tables,
             get_table_definition,
-            get_system_theme
+            get_system_theme,
+            export_table,
+            export_database,
+            import_sql,
+            read_file_preview,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

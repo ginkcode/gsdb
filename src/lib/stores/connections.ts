@@ -212,6 +212,9 @@ export function findTabByTitle(connectionId: string, title: string): QueryTab | 
 }
 
 export function openTableTab(connectionId: string, tableName: string, sql: string): QueryTab {
+  // Set the active connection
+  activeConnectionId.set(connectionId);
+  
   // Check if tab for this table already exists
   let existingTab: QueryTab | undefined;
   queryTabs.subscribe((tabs) => {

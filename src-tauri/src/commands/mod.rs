@@ -4,6 +4,13 @@ use tokio::sync::Mutex;
 
 use crate::db::{Connection, DbPool, QueryResult};
 
+#[derive(serde::Serialize)]
+pub struct FilePreview {
+    pub content: String,
+    pub truncated: bool,
+    pub total_bytes: u64,
+}
+
 pub struct AppState {
     pub connections: Mutex<HashMap<String, Connection>>,
     pub pools: Mutex<HashMap<String, DbPool>>,
@@ -103,6 +110,87 @@ pub fn get_system_theme() -> String {
         Ok(dark_light::Mode::Unspecified) => "light".to_string(),
         Err(_) => "light".to_string(),
     }
+}
+
+#[tauri::command]
+pub async fn export_table(
+    connection_id: String,
+    table_name: String,
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let pool = {
+        let pools = state.pools.lock().await;
+        pools
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+            .clone()
+    };
+    let sql = pool
+        .export_table_sql(&table_name)
+        .await
+        .map_err(|e| e.to_string())?;
+    std::fs::write(&file_path, sql).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn export_database(
+    connection_id: String,
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let pool = {
+        let pools = state.pools.lock().await;
+        pools
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+            .clone()
+    };
+    let sql = pool
+        .export_database_sql()
+        .await
+        .map_err(|e| e.to_string())?;
+    std::fs::write(&file_path, sql).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn import_sql(
+    connection_id: String,
+    file_path: String,
+    disable_fk_checks: bool,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let pool = {
+        let pools = state.pools.lock().await;
+        pools
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+            .clone()
+    };
+    let sql = std::fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
+    let count = pool
+        .import_sql(&sql, disable_fk_checks)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(format!("{} statement(s) executed", count))
+}
+
+#[tauri::command]
+pub async fn read_file_preview(file_path: String) -> Result<FilePreview, String> {
+    let bytes = std::fs::read(&file_path).map_err(|e| e.to_string())?;
+    let total_bytes = bytes.len() as u64;
+    const MAX_BYTES: usize = 16_384; // 16 KB preview
+    let (slice, truncated) = if bytes.len() > MAX_BYTES {
+        (&bytes[..MAX_BYTES], true)
+    } else {
+        (bytes.as_slice(), false)
+    };
+    let content = String::from_utf8_lossy(slice).into_owned();
+    Ok(FilePreview {
+        content,
+        truncated,
+        total_bytes,
+    })
 }
 
 #[tauri::command]
