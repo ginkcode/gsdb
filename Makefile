@@ -1,16 +1,20 @@
-.PHONY: help build release clean version tag push-tag push
+.PHONY: help build release clean version tag push-tag push aur aur-deploy
 
 # Current version from package.json
 VERSION := $(shell node -p "require('./package.json').version")
 # Explicitly set cargo target dir to avoid issues with CARGO_TARGET_DIR env var
 CARGO_TARGET_DIR := $(HOME)/.cargo_cache
+# AUR repository paths
+AUR_GSDB_DIR := /home/gink/Workspaces/learning/tools/gsdb
+AUR_GSDB_BIN_DIR := /home/gink/Workspaces/learning/tools/gsdb-bin
 
 help:
 	@echo "GSDB Makefile"
 	@echo ""
 	@echo "Usage:"
 	@echo "  make build          - Build the application (binary, deb, rpm, appimage)"
-	@echo "  make release        - Create a GitHub release with AppImage"
+	@echo "  make release        - Push commits, tag, and create a GitHub release with AppImage"
+	@echo "  make aur-deploy     - Copy AUR files to local gsdb/gsdb-bin repos"
 	@echo "  make version        - Show current version"
 	@echo "  make tag            - Create a git tag for current version"
 	@echo "  make push-tag       - Push tag to remote"
@@ -26,7 +30,7 @@ version:
 
 build:
 	@echo "Building GSDB v$(VERSION)..."
-	npm install
+	npm ci
 	CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) npm run tauri:build
 	@echo ""
 	@echo "Build complete!"
@@ -47,7 +51,7 @@ push:
 	@echo "Pushing commits to remote..."
 	git push origin main
 
-release: build tag push-tag
+release: build push tag push-tag
 	@echo "Creating GitHub release v$(VERSION)..."
 	gh release create v$(VERSION) \
 		$(CARGO_TARGET_DIR)/release/bundle/appimage/GSDB_$(VERSION)_amd64.AppImage \
@@ -73,11 +77,8 @@ endif
 	sed -i 's/pkgver=.*/pkgver=$(V)/' pkg/aur/PKGBUILD-bin
 	sed -i 's/pkgrel=.*/pkgrel=1/' pkg/aur/PKGBUILD
 	sed -i 's/pkgrel=.*/pkgrel=1/' pkg/aur/PKGBUILD-bin
-	@# Update .SRCINFO
-	sed -i 's/pkgver = .*/pkgver = $(V)/' pkg/aur/.SRCINFO
-	sed -i 's/pkgver = .*/pkgver = $(V)/' pkg/aur/.SRCINFO-bin
-	sed -i 's/source = gsdb-.*.tar.gz/source = gsdb-$(V).tar.gz/' pkg/aur/.SRCINFO
-	sed -i 's/source = gsdb-.*.tar.gz/source = gsdb-$(V).tar.gz/' pkg/aur/.SRCINFO-bin
+	@# Regenerate .SRCINFO files from updated PKGBUILDs
+	$(MAKE) aur
 	@echo "Version updated to $(V)"
 	@echo "Don't forget to:"
 	@echo "  1. git add ."
@@ -89,6 +90,7 @@ clean:
 	rm -rf build/
 	rm -rf .svelte-kit/
 	rm -rf src-tauri/target/
+	rm -rf $(CARGO_TARGET_DIR)/release/
 	rm -rf node_modules/
 	@echo "Clean complete!"
 
@@ -96,7 +98,19 @@ aur:
 	@echo "Updating AUR .SRCINFO files..."
 	cd pkg/aur && makepkg --printsrcinfo > .SRCINFO
 	cd pkg/aur && cp PKGBUILD PKGBUILD.bak && cp PKGBUILD-bin PKGBUILD && makepkg --printsrcinfo > .SRCINFO-bin && mv PKGBUILD.bak PKGBUILD
-	@echo "AUR files updated. Copy them to the AUR repository to publish."
+	@echo "AUR files updated."
+
+aur-deploy: aur
+	@echo "Deploying to AUR repos..."
+	cp pkg/aur/PKGBUILD $(AUR_GSDB_DIR)/PKGBUILD
+	cp pkg/aur/.SRCINFO $(AUR_GSDB_DIR)/.SRCINFO
+	cp pkg/aur/gsdb.desktop $(AUR_GSDB_DIR)/gsdb.desktop
+	cp pkg/aur/PKGBUILD-bin $(AUR_GSDB_BIN_DIR)/PKGBUILD
+	cp pkg/aur/.SRCINFO-bin $(AUR_GSDB_BIN_DIR)/.SRCINFO
+	@echo "Deployed v$(VERSION) to AUR repos."
+	@echo "  gsdb:     $(AUR_GSDB_DIR)"
+	@echo "  gsdb-bin: $(AUR_GSDB_BIN_DIR)"
+	@echo "Next: cd into each repo, git add -A, git commit, git push"
 
 install:
 	@echo "Installing the binary to /usr/bin..."

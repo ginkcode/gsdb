@@ -11,136 +11,126 @@ This guide explains how to manage the GSDB AUR packages (`gsdb` and `gsdb-bin`).
 
 Users should prefer `gsdb-bin` for faster installation. Use `gsdb` only if they want to compile from source.
 
+## Local AUR Repo Paths
+
+| Repo       | Path                                                  |
+| ---------- | ----------------------------------------------------- |
+| `gsdb`     | `/home/gink/Workspaces/learning/tools/gsdb`     |
+| `gsdb-bin` | `/home/gink/Workspaces/learning/tools/gsdb-bin` |
+
 ## Initial Setup (One-time)
 
-### Create AUR Repositories
+Clone the AUR repos and do the first upload:
 
 ```bash
-# Create gsdb AUR repo
 cd /home/gink/Workspaces/learning/tools
-git clone ssh://aur@aur.archlinux.org/gsdb.git
-cd gsdb
-cp /home/gink/Workspaces/learning/tools/gs-data-tool/pkg/aur/PKGBUILD .
-cp /home/gink/Workspaces/learning/tools/gs-data-tool/pkg/aur/.SRCINFO .
-git init
-git add PKGBUILD .SRCINFO
-git commit -m "Initial upload: gsdb 0.2.0"
-git remote add origin ssh://aur@aur.archlinux.org/gsdb.git
-git push -f origin master
 
-# Create gsdb-bin AUR repo
-cd /home/gink/Workspaces/learning/tools
+git clone ssh://aur@aur.archlinux.org/gsdb.git
 git clone ssh://aur@aur.archlinux.org/gsdb-bin.git
-cd gsdb-bin
-cp /home/gink/Workspaces/learning/tools/gs-data-tool/pkg/aur/PKGBUILD-bin ./PKGBUILD
-cp /home/gink/Workspaces/learning/tools/gs-data-tool/pkg/aur/.SRCINFO-bin ./.SRCINFO
-git init
-git add PKGBUILD .SRCINFO
-git commit -m "Initial upload: gsdb-bin 0.2.0"
-git remote add origin ssh://aur@aur.archlinux.org/gsdb-bin.git
-git push -f origin master
+```
+
+Then deploy and push the initial files:
+
+```bash
+cd /home/gink/Workspaces/learning/tools/gs-data-tool
+make aur-deploy
+
+cd /home/gink/Workspaces/learning/tools/gsdb
+git add -A && git commit -m "Initial upload: gsdb $(version)" && git push
+
+cd /home/gink/Workspaces/learning/tools/gsdb-bin
+git add -A && git commit -m "Initial upload: gsdb-bin $(version)" && git push
 ```
 
 ## Release Workflow
 
-When releasing a new version, follow these steps:
-
-### 1. Update Version and Build
+### 1. Set the new version
 
 ```bash
-# In main repo
 cd /home/gink/Workspaces/learning/tools/gs-data-tool
-make set-version V=0.2.1
-git add . && git commit -m "chore: bump version to 0.2.1"
+make set-version V=0.3.0
+```
+
+This updates the version in `package.json`, `Cargo.toml`, `tauri.conf.json`, both PKGBUILDs, and regenerates `.SRCINFO` files automatically.
+
+### 2. Commit the version bump
+
+```bash
+git add .
+git commit -m "chore: bump version to 0.3.0"
+```
+
+### 3. Build and publish the GitHub release
+
+```bash
 make release
 ```
 
 This will:
+- Build the app and AppImage
+- Push commits to `main`
+- Create and push the git tag
+- Create the GitHub release with the AppImage attached
 
-- Update version in package.json, Cargo.toml, tauri.conf.json, PKGBUILD files
-- Build the AppImage
-- Create and push git tag
-- Create GitHub release with AppImage
-
-### 2. Update AUR Packages
+### 4. Deploy to AUR repos
 
 ```bash
-# Update gsdb (build from source)
-cd /home/gink/Workspaces/learning/tools/gs-data-aur
-cp /home/gink/Workspaces/learning/tools/gs-data-tool/pkg/aur/PKGBUILD .
-cp /home/gink/Workspaces/learning/tools/gs-data-tool/pkg/aur/.SRCINFO .
-makepkg --printsrcinfo > .SRCINFO
-git add . && git commit -m "Update to 0.2.1"
-git push
+make aur-deploy
+```
 
-# Update gsdb-bin (pre-built binary)
+This copies the correct files into both local AUR repos:
+- `pkg/aur/PKGBUILD` + `.SRCINFO` + `gsdb.desktop` → `gsdb/`
+- `pkg/aur/PKGBUILD-bin` + `.SRCINFO-bin` → `gsdb-bin/` (renamed to `PKGBUILD` / `.SRCINFO`)
+
+### 5. Push to AUR
+
+```bash
+cd /home/gink/Workspaces/learning/tools/gsdb
+git add -A && git commit -m "Update to 0.3.0" && git push
+
 cd /home/gink/Workspaces/learning/tools/gsdb-bin
-cp /home/gink/Workspaces/learning/tools/gs-data-tool/pkg/aur/PKGBUILD-bin ./PKGBUILD
-cp /home/gink/Workspaces/learning/tools/gs-data-tool/pkg/aur/.SRCINFO-bin ./.SRCINFO
-git add . && git commit -m "Update to 0.2.1"
-git push
+git add -A && git commit -m "Update to 0.3.0" && git push
 ```
 
-### 3. Verify
+### 6. Verify
 
 ```bash
-# Check packages are updated
 yay -Ss gsdb
-yay -Ss gsdb-bin
 ```
+
+> AUR search indexing can take a few minutes after pushing. Direct install works immediately: `yay -S gsdb-bin`
 
 ## File Locations
 
-| File                   | Purpose                   |
-| ---------------------- | ------------------------- |
-| `pkg/aur/PKGBUILD`     | Build from source package |
-| `pkg/aur/PKGBUILD-bin` | Pre-built binary package  |
-| `pkg/aur/.SRCINFO`     | Source info for gsdb      |
-| `pkg/aur/.SRCINFO-bin` | Source info for gsdb-bin  |
-| `pkg/aur/gsdb.desktop` | Desktop entry file        |
+| File                   | Purpose                        |
+| ---------------------- | ------------------------------ |
+| `pkg/aur/PKGBUILD`     | Build-from-source package      |
+| `pkg/aur/PKGBUILD-bin` | Pre-built binary package       |
+| `pkg/aur/.SRCINFO`     | Generated metadata for `gsdb`     |
+| `pkg/aur/.SRCINFO-bin` | Generated metadata for `gsdb-bin` |
+| `pkg/aur/gsdb.desktop` | Desktop entry file             |
 
-## Important Notes
-
-### CARGO_TARGET_DIR
-
-The PKGBUILD explicitly sets `--target-dir target` to ensure consistent build output location regardless of user's `CARGO_TARGET_DIR` environment variable.
-
-### AppImage Naming
-
-The AppImage filename follows the pattern: `GSDB_{version}_amd64.AppImage`
-
-Example: `GSDB_0.2.0_amd64.AppImage`
-
-### Dependencies
+## Dependencies
 
 **Runtime (both packages):**
-
 - webkit2gtk-4.1
 - gtk3
 - libsoup3
 - openssl
 - libssh2
+- libsecret
 
-**Build (gsdb only):**
-
+**Build (`gsdb` only):**
 - rust
 - nodejs
 - npm
 
 ## Troubleshooting
 
-### Package not found in search
-
-AUR search indexing can take a few minutes after pushing. Direct installation still works:
-
-```bash
-yay -S gsdb-bin
-```
-
 ### Build fails with CARGO_TARGET_DIR error
 
-Fixed in PKGBUILD by explicitly setting `--target-dir target` in the cargo build command.
+The PKGBUILD explicitly sets `--target-dir target` so the binary is always at `src-tauri/target/release/gsdb` regardless of the user's `CARGO_TARGET_DIR` environment variable.
 
-### AppImage download fails
+### AppImage download fails in gsdb-bin
 
-Ensure the GitHub release exists and the version in PKGBUILD matches the release tag.
+Ensure the GitHub release exists and that the version in `PKGBUILD-bin` matches the release tag. Run `make release` before `make aur-deploy`.
