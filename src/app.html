@@ -1,34 +1,48 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <link rel="icon" href="%sveltekit.assets%/favicon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tauri + SvelteKit + Typescript App</title>
-    <script>
-      // Theme detection - runs before page render to prevent flash
-      // Note: In Tauri webview, matchMedia('(prefers-color-scheme: dark)') may not work correctly
-      // We default to dark for 'system' and let Tauri API correct it after mount
-      (function() {
-        const storageKey = 'theme-preference';
-        const stored = localStorage.getItem(storageKey);
-        
-        let isDark = true; // Default to dark (safer for Tauri)
-        
-        if (stored === 'dark') {
-          isDark = true;
-        } else if (stored === 'light') {
-          isDark = false;
-        }
-        // For 'system' or no stored preference, default to dark
-        // The Tauri API will correct this after mount if needed
-        
-        document.documentElement.classList.toggle('dark', isDark);
-      })();
-    </script>
-    %sveltekit.head%
-  </head>
-  <body data-sveltekit-preload-data="hover">
-    <div style="display: contents">%sveltekit.body%</div>
-  </body>
+    <head>
+        <meta charset="utf-8" />
+        <link rel="icon" href="%sveltekit.assets%/favicon.png" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Tauri + SvelteKit + Typescript App</title>
+        <script>
+            // Theme detection - runs before page render to prevent flash
+            // Note: In Tauri webview, matchMedia('(prefers-color-scheme: dark)') may not work correctly
+            // We default to dark for 'system' and let Tauri API correct it after mount
+            (function () {
+                const storageKey = "theme-preference";
+                const stored = localStorage.getItem(storageKey);
+
+                let isDark = true; // Default to dark (safer for Tauri)
+
+                if (stored === "dark") {
+                    isDark = true;
+                } else if (stored === "light") {
+                    isDark = false;
+                }
+                // For 'system' or no stored preference, default to dark
+                // The Tauri API will correct this after mount if needed
+
+                document.documentElement.classList.toggle("dark", isDark);
+            })();
+        </script>
+        %sveltekit.head%
+    </head>
+
+    <body data-sveltekit-preload-data="hover">
+        <script>
+            // Disable default browser context menu, but allow custom context menus
+            document.addEventListener("contextmenu", (e) => {
+                // Allow if a custom context menu is being shown (element has contextmenu handling)
+                if (
+                    e.target.closest("[data-contextmenu]") ||
+                    e.target.closest(".cm-content")
+                ) {
+                    return;
+                }
+                e.preventDefault();
+            });
+        </script>
+        <div style="display: contents">%sveltekit.body%</div>
+    </body>
 </html>
