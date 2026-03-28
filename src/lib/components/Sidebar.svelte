@@ -1,32 +1,10 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { onMount } from "svelte";
   import type { Snippet } from "svelte";
-  import { EditorView } from "@codemirror/view";
-  import { sql } from "@codemirror/lang-sql";
-  import { oneDark } from "@codemirror/theme-one-dark";
   import { toast } from "svelte-sonner";
-  import {
-    Plus,
-    Database,
-    ChevronRight,
-    ChevronDown,
-    Table,
-    Loader,
-    Pencil,
-    Trash2,
-    Eraser,
-    RefreshCw,
-    Info,
-    Copy,
-    Download,
-    Upload,
-  } from "@lucide/svelte";
+  import { Plus, Database } from "@lucide/svelte";
   import { save, open } from "@tauri-apps/plugin-dialog";
   import { Button } from "$lib/components/ui/button";
-  import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
-  import * as ContextMenu from "$lib/components/ui/context-menu";
-  import * as Dialog from "$lib/components/ui/dialog";
   import {
     connections,
     activeConnectionId,
@@ -35,6 +13,10 @@
     reconnectConnection,
   } from "$lib/stores/connections";
   import type { Connection } from "$lib/types";
+  import ConnectionItem from "./ConnectionItem.svelte";
+  import TableActionDialog from "./TableActionDialog.svelte";
+  import ImportSqlDialog from "./ImportSqlDialog.svelte";
+  import TableInfoDialog from "./TableInfoDialog.svelte";
 
   let {
     onEditConnection,
@@ -60,8 +42,6 @@
   let tableInfoName = $state("");
   let tableInfoDefinition = $state("");
   let tableInfoLoading = $state(false);
-  let tableInfoEditorEl = $state<HTMLDivElement>();
-  let tableInfoEditor: EditorView | null = null;
 
   const driverColors: Record<string, string> = {
     postgres: "bg-blue-500/15 text-blue-400 border-blue-500/20",
@@ -165,37 +145,6 @@
     }
   }
 
-  // Effect to update CodeMirror editor when definition changes
-  $effect(() => {
-    if (
-      tableInfoOpen &&
-      tableInfoEditorEl &&
-      tableInfoDefinition &&
-      !tableInfoLoading
-    ) {
-      // Destroy existing editor if any
-      if (tableInfoEditor) {
-        tableInfoEditor.destroy();
-      }
-      // Create new editor - minimal setup without line numbers, read-only
-      tableInfoEditor = new EditorView({
-        doc: tableInfoDefinition,
-        extensions: [
-          sql(),
-          oneDark,
-          EditorView.editable.of(false),
-          EditorView.lineWrapping,
-        ],
-        parent: tableInfoEditorEl,
-      });
-    }
-    // Cleanup when dialog closes
-    if (!tableInfoOpen && tableInfoEditor) {
-      tableInfoEditor.destroy();
-      tableInfoEditor = null;
-    }
-  });
-
   // Table destructive action dialog state
   type TableActionType = "delete" | "truncate" | "drop";
   let tableActionDialogOpen = $state(false);
@@ -204,29 +153,6 @@
   let tableActionType = $state<TableActionType>("delete");
   let tableActionSql = $state("");
   let tableActionLoading = $state(false);
-
-  const tableActionMeta: Record<
-    TableActionType,
-    { title: string; description: string; confirm: string }
-  > = {
-    delete: {
-      title: "Delete all rows",
-      description:
-        "All rows will be permanently deleted. The table structure will remain.",
-      confirm: "Delete Rows",
-    },
-    truncate: {
-      title: "Truncate table",
-      description:
-        "All rows will be removed from the table. This cannot be undone.",
-      confirm: "Truncate",
-    },
-    drop: {
-      title: "Drop table",
-      description: "The table and all its data will be permanently deleted.",
-      confirm: "Drop Table",
-    },
-  };
 
   function openTableAction(
     type: TableActionType,
@@ -409,284 +335,39 @@
       Connections
     </p>
     {#each $connections as conn}
-      {@const isExpanded = expandedConnections.has(conn.id)}
-      {@const isLoading = loadingTables.has(conn.id)}
-      {@const tables = connectionTables[conn.id] ?? []}
-
-      {#snippet connMenuItems(Item: any, Separator: any)}
-        <Item
-          class="flex items-center gap-2 cursor-pointer"
-          onclick={() => onEditConnection(conn)}
-        >
-          <Pencil class="w-4 h-4" /><span>Edit</span>
-        </Item>
-        <Item
-          class="flex items-center gap-2 cursor-pointer"
-          onclick={() => handleReconnect(conn)}
-          disabled={reconnectingConnections.has(conn.id)}
-        >
-          <RefreshCw
-            class="w-4 h-4 {reconnectingConnections.has(conn.id)
-              ? 'animate-spin'
-              : ''}"
-          />
-          <span
-            >{reconnectingConnections.has(conn.id)
-              ? "Reconnecting..."
-              : "Reconnect"}</span
-          >
-        </Item>
-        <Item
-          class="flex items-center gap-2 cursor-pointer"
-          onclick={() => refreshTables(conn.id)}
-        >
-          <svg
-            class="w-4 h-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
-            <path d="M21 3v5h-5" />
-          </svg>
-          <span>Refresh Tables</span>
-        </Item>
-        <Item
-          class="flex items-center gap-2 cursor-pointer"
-          onclick={() => onRenameConnection(conn)}
-        >
-          <svg
-            class="w-4 h-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-          </svg>
-          <span>Rename</span>
-        </Item>
-        <Separator />
-        <Item
-          class="flex items-center gap-2 cursor-pointer"
-          onclick={() => exportDatabase(conn)}
-        >
-          <Download class="w-4 h-4" /><span>Export Database</span>
-        </Item>
-        <Item
-          class="flex items-center gap-2 cursor-pointer"
-          onclick={() => importSql(conn.id)}
-        >
-          <Upload class="w-4 h-4" /><span>Import SQL</span>
-        </Item>
-        <Separator />
-        <Item
-          class="flex items-center gap-2 cursor-pointer text-destructive focus:text-destructive"
-          onclick={() => onDeleteConnection(conn)}
-        >
-          <Trash2 class="w-4 h-4" /><span>Delete</span>
-        </Item>
-      {/snippet}
-
-      <!-- Connection row -->
-      <ContextMenu.Root>
-        <ContextMenu.Trigger>
-          <div
-            class="flex items-center gap-1 px-1 py-1 rounded-md group
-                  {$activeConnectionId === conn.id
-              ? 'bg-accent'
-              : 'hover:bg-accent/40'}"
-          >
-            <!-- Expand/collapse toggle -->
-            <button
-              class="flex items-center gap-1.5 flex-1 min-w-0 text-left"
-              onclick={() => toggleConnection(conn.id)}
-            >
-              {#if isLoading}
-                <Loader
-                  class="w-3.5 h-3.5 shrink-0 text-muted-foreground animate-spin"
-                />
-              {:else if isExpanded}
-                <ChevronDown
-                  class="w-3.5 h-3.5 shrink-0 text-muted-foreground"
-                />
-              {:else}
-                <ChevronRight
-                  class="w-3.5 h-3.5 shrink-0 text-muted-foreground"
-                />
-              {/if}
-              <span
-                class="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border {driverColors[
-                  conn.driver
-                ]}"
-              >
-                {driverLabel[conn.driver]}
-              </span>
-              <span
-                class="truncate text-sm
-                      {$activeConnectionId === conn.id
-                  ? 'text-accent-foreground'
-                  : 'text-muted-foreground group-hover:text-foreground'}"
-              >
-                {conn.name}
-              </span>
-            </button>
-
-            <!-- New query tab button -->
-            <button
-              class="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-muted-foreground/20 transition-all"
-              title="New query tab"
-              onclick={() => {
-                activeConnectionId.set(conn.id);
-                addTab(conn.id);
-              }}
-            >
-              <Plus class="w-3.5 h-3.5 text-muted-foreground" />
-            </button>
-
-            <!-- Three-dot dropdown -->
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger>
-                <button
-                  class="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-muted-foreground/20 transition-all"
-                  title="More options"
-                >
-                  <svg
-                    class="w-3.5 h-3.5 text-muted-foreground"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <circle cx="12" cy="5" r="1" />
-                    <circle cx="12" cy="12" r="1" />
-                    <circle cx="12" cy="19" r="1" />
-                  </svg>
-                </button>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Content class="min-w-44">
-                {@render connMenuItems(
-                  DropdownMenu.Item,
-                  DropdownMenu.Separator,
-                )}
-              </DropdownMenu.Content>
-            </DropdownMenu.Root>
-          </div>
-        </ContextMenu.Trigger>
-        <ContextMenu.Content>
-          {@render connMenuItems(ContextMenu.Item, ContextMenu.Separator)}
-        </ContextMenu.Content>
-      </ContextMenu.Root>
-
-      <!-- Table list -->
-      {#if isExpanded}
-        <div class="ml-4 mb-1">
-          {#if tables.length === 0 && !isLoading}
-            <p class="px-2 py-1 text-xs text-muted-foreground italic">
-              No tables found
-            </p>
-          {/if}
-          {#each tables as table}
-            {#snippet tableMenuItems(Item: any, Separator: any)}
-              <Item
-                class="flex items-center gap-2 cursor-pointer"
-                onclick={() => showTableInfo(conn.id, table)}
-              >
-                <Info class="w-4 h-4" /><span>Info</span>
-              </Item>
-              <Separator />
-              <Item
-                class="flex items-center gap-2 cursor-pointer"
-                onclick={() => exportTable(conn.id, table)}
-              >
-                <Download class="w-4 h-4" /><span>Export Table</span>
-              </Item>
-              <Item
-                class="flex items-center gap-2 cursor-pointer"
-                onclick={() => importSql(conn.id)}
-              >
-                <Upload class="w-4 h-4" /><span>Import SQL</span>
-              </Item>
-              <Separator />
-              <Item
-                class="flex items-center gap-2 cursor-pointer text-destructive focus:text-destructive"
-                onclick={() =>
-                  openTableAction("delete", conn.id, table, conn.driver)}
-              >
-                <Trash2 class="w-4 h-4" /><span>Delete</span>
-              </Item>
-              <Item
-                class="flex items-center gap-2 cursor-pointer text-destructive focus:text-destructive"
-                onclick={() =>
-                  openTableAction("truncate", conn.id, table, conn.driver)}
-              >
-                <Eraser class="w-4 h-4" /><span>Truncate</span>
-              </Item>
-              <Item
-                class="flex items-center gap-2 cursor-pointer text-destructive focus:text-destructive"
-                onclick={() =>
-                  openTableAction("drop", conn.id, table, conn.driver)}
-              >
-                <Trash2 class="w-4 h-4" /><span>Drop Table</span>
-              </Item>
-            {/snippet}
-
-            <ContextMenu.Root>
-              <ContextMenu.Trigger>
-                <div class="group flex items-center gap-1">
-                  <button
-                    class="flex-1 flex items-center gap-2 px-2 py-1 rounded text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors text-left"
-                    onclick={() => {
-                      openTableTab(
-                        conn.id,
-                        table,
-                        `SELECT * FROM ${table} LIMIT 100;`,
-                      );
-                    }}
-                  >
-                    <Table class="w-3 h-3 shrink-0" />
-                    <span class="truncate">{table}</span>
-                  </button>
-                  <!-- Three-dot dropdown -->
-                  <DropdownMenu.Root>
-                    <DropdownMenu.Trigger>
-                      <button
-                        class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-muted-foreground/20 transition-all"
-                        title="Table options"
-                      >
-                        <svg
-                          class="w-3 h-3 text-muted-foreground"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
-                        >
-                          <circle cx="12" cy="5" r="1" />
-                          <circle cx="12" cy="12" r="1" />
-                          <circle cx="12" cy="19" r="1" />
-                        </svg>
-                      </button>
-                    </DropdownMenu.Trigger>
-                    <DropdownMenu.Content class="min-w-36">
-                      {@render tableMenuItems(
-                        DropdownMenu.Item,
-                        DropdownMenu.Separator,
-                      )}
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Root>
-                </div>
-              </ContextMenu.Trigger>
-              <ContextMenu.Content>
-                {@render tableMenuItems(
-                  ContextMenu.Item,
-                  ContextMenu.Separator,
-                )}
-              </ContextMenu.Content>
-            </ContextMenu.Root>
-          {/each}
-        </div>
-      {/if}
+      <ConnectionItem
+        connection={conn}
+        isActive={$activeConnectionId === conn.id}
+        isExpanded={expandedConnections.has(conn.id)}
+        isLoading={loadingTables.has(conn.id)}
+        tables={connectionTables[conn.id] ?? []}
+        isReconnecting={reconnectingConnections.has(conn.id)}
+        {driverColors}
+        {driverLabel}
+        onToggle={() => toggleConnection(conn.id)}
+        onNewQuery={() => {
+          activeConnectionId.set(conn.id);
+          addTab(conn.id);
+        }}
+        onEdit={() => onEditConnection(conn)}
+        onReconnect={() => handleReconnect(conn)}
+        onRefreshTables={() => refreshTables(conn.id)}
+        onRename={() => onRenameConnection(conn)}
+        onExport={() => exportDatabase(conn)}
+        onImport={() => importSql(conn.id)}
+        onDelete={() => onDeleteConnection(conn)}
+        onOpenTable={(table) =>
+          openTableTab(conn.id, table, `SELECT * FROM ${table} LIMIT 100;`)}
+        onShowTableInfo={(table) => showTableInfo(conn.id, table)}
+        onExportTable={(table) => exportTable(conn.id, table)}
+        onImportTable={() => importSql(conn.id)}
+        onDeleteTable={(table) =>
+          openTableAction("delete", conn.id, table, conn.driver)}
+        onTruncateTable={(table) =>
+          openTableAction("truncate", conn.id, table, conn.driver)}
+        onDropTable={(table) =>
+          openTableAction("drop", conn.id, table, conn.driver)}
+      />
     {/each}
 
     {#if $connections.length === 0}
@@ -700,160 +381,35 @@
   </div>
 
   <!-- Table Action Confirmation Dialog -->
-  <Dialog.Root bind:open={tableActionDialogOpen}>
-    <Dialog.Content class="sm:max-w-md">
-      <Dialog.Header>
-        <Dialog.Title
-          >{tableActionMeta[tableActionType].title}:
-          <strong>{tableActionTableName}</strong></Dialog.Title
-        >
-        <Dialog.Description>
-          {tableActionMeta[tableActionType].description}
-        </Dialog.Description>
-      </Dialog.Header>
-      <div
-        class="rounded border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-muted-foreground"
-      >
-        {tableActionSql}
-      </div>
-      <Dialog.Footer>
-        <Button
-          variant="outline"
-          onclick={() => (tableActionDialogOpen = false)}
-          disabled={tableActionLoading}>Cancel</Button
-        >
-        <Button
-          variant="destructive"
-          onclick={confirmTableAction}
-          disabled={tableActionLoading}
-        >
-          {#if tableActionLoading}
-            <Loader class="w-4 h-4 mr-2 animate-spin" />
-            Processing...
-          {:else}
-            {tableActionMeta[tableActionType].confirm}
-          {/if}
-        </Button>
-      </Dialog.Footer>
-    </Dialog.Content>
-  </Dialog.Root>
+  <TableActionDialog
+    bind:open={tableActionDialogOpen}
+    actionType={tableActionType}
+    tableName={tableActionTableName}
+    sql={tableActionSql}
+    loading={tableActionLoading}
+    onConfirm={confirmTableAction}
+    onCancel={() => (tableActionDialogOpen = false)}
+  />
 
   <!-- Import SQL Dialog -->
-  <Dialog.Root bind:open={importDialogOpen}>
-    <Dialog.Content
-      class="sm:max-w-3xl max-h-[85vh] overflow-hidden flex flex-col w-full"
-    >
-      <Dialog.Header>
-        <Dialog.Title>Import SQL</Dialog.Title>
-        <Dialog.Description class="text-xs text-muted-foreground truncate">
-          {importFileName}
-          <span class="ml-2 text-muted-foreground/60"
-            >({formatBytes(importTotalBytes)})</span
-          >
-        </Dialog.Description>
-      </Dialog.Header>
-
-      <!-- SQL preview -->
-      <div
-        class="flex-1 overflow-auto rounded border border-border bg-muted/30"
-      >
-        <pre
-          class="p-3 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed text-foreground">{importPreview}</pre>
-        {#if importTruncated}
-          <div
-            class="sticky bottom-0 px-3 py-2 text-xs text-amber-500 bg-muted/80 border-t border-border"
-          >
-            Preview truncated — showing first 16 KB of {formatBytes(
-              importTotalBytes,
-            )} file. Full file will be imported.
-          </div>
-        {/if}
-      </div>
-
-      <!-- Options -->
-      <div class="pt-2">
-        <label class="flex items-center gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            class="rounded border-border"
-            bind:checked={importDisableFkChecks}
-          />
-          <span class="text-sm">Disable foreign key checks during import</span>
-        </label>
-        <p class="mt-1 ml-6 text-xs text-muted-foreground">
-          Useful when importing data with circular references or out-of-order
-          inserts.
-        </p>
-      </div>
-
-      <Dialog.Footer>
-        <Button
-          variant="outline"
-          onclick={() => (importDialogOpen = false)}
-          disabled={importLoading}>Cancel</Button
-        >
-        <Button onclick={confirmImport} disabled={importLoading}>
-          {#if importLoading}
-            <Loader class="w-4 h-4 mr-2 animate-spin" />
-            Importing...
-          {:else}
-            Confirm Import
-          {/if}
-        </Button>
-      </Dialog.Footer>
-    </Dialog.Content>
-  </Dialog.Root>
+  <ImportSqlDialog
+    bind:open={importDialogOpen}
+    fileName={importFileName}
+    preview={importPreview}
+    truncated={importTruncated}
+    totalBytes={importTotalBytes}
+    bind:disableFkChecks={importDisableFkChecks}
+    loading={importLoading}
+    onConfirm={confirmImport}
+    onCancel={() => (importDialogOpen = false)}
+  />
 
   <!-- Table Info Dialog -->
-  <Dialog.Root bind:open={tableInfoOpen}>
-    <Dialog.Content
-      class="sm:max-w-3xl max-h-[85vh] overflow-hidden flex flex-col w-full"
-    >
-      <Dialog.Header>
-        <Dialog.Title>Table: <strong>{tableInfoName}</strong></Dialog.Title>
-      </Dialog.Header>
-      <div class="flex-1 overflow-auto">
-        {#if tableInfoLoading}
-          <div class="flex items-center justify-center py-8">
-            <Loader class="w-6 h-6 animate-spin text-muted-foreground" />
-          </div>
-        {:else if tableInfoDefinition}
-          <div bind:this={tableInfoEditorEl} class="cm-editor-wrapper"></div>
-        {/if}
-      </div>
-      <Dialog.Footer>
-        <Button
-          variant="ghost"
-          size="icon"
-          onclick={copyTableDefinition}
-          disabled={!tableInfoDefinition || tableInfoLoading}
-          title="Copy to clipboard"
-        >
-          <Copy class="w-4 h-4" />
-        </Button>
-        <Button variant="outline" onclick={() => (tableInfoOpen = false)}
-          >Close</Button
-        >
-      </Dialog.Footer>
-    </Dialog.Content>
-  </Dialog.Root>
+  <TableInfoDialog
+    bind:open={tableInfoOpen}
+    tableName={tableInfoName}
+    definition={tableInfoDefinition}
+    loading={tableInfoLoading}
+    onClose={() => (tableInfoOpen = false)}
+  />
 </aside>
-
-<style>
-  .cm-editor-wrapper :global(.cm-editor) {
-    background: transparent;
-    font-size: 0.875rem;
-    height: auto;
-    min-height: 200px;
-  }
-  .cm-editor-wrapper :global(.cm-editor .cm-scroller) {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      "Liberation Mono", "Courier New", monospace;
-  }
-  .cm-editor-wrapper :global(.cm-editor .cm-content) {
-    padding: 0;
-  }
-  .cm-editor-wrapper :global(.cm-editor .cm-line) {
-    padding: 0;
-  }
-</style>
