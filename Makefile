@@ -2,6 +2,8 @@
 
 # Current version from package.json
 VERSION := $(shell node -p "require('./package.json').version")
+# Explicitly set cargo target dir to avoid issues with CARGO_TARGET_DIR env var
+CARGO_TARGET_DIR := $(HOME)/.cargo_cache
 
 help:
 	@echo "GSDB Makefile"
@@ -25,13 +27,13 @@ version:
 build:
 	@echo "Building GSDB v$(VERSION)..."
 	npm install
-	npm run tauri:build
+	CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) npm run tauri:build
 	@echo ""
 	@echo "Build complete!"
-	@echo "  Binary:   ~/.cargo_cache/release/gsdb"
-	@echo "  DEB:      ~/.cargo_cache/release/bundle/deb/GSDB_$(VERSION)_amd64.deb"
-	@echo "  RPM:      ~/.cargo_cache/release/bundle/rpm/GSDB-$(VERSION)-1.x86_64.rpm"
-	@echo "  AppImage: ~/.cargo_cache/release/bundle/appimage/GSDB_$(VERSION)_amd64.AppImage"
+	@echo "  Binary:   $(CARGO_TARGET_DIR)/release/gsdb"
+	@echo "  DEB:      $(CARGO_TARGET_DIR)/release/bundle/deb/GSDB_$(VERSION)_amd64.deb"
+	@echo "  RPM:      $(CARGO_TARGET_DIR)/release/bundle/rpm/GSDB-$(VERSION)-1.x86_64.rpm"
+	@echo "  AppImage: $(CARGO_TARGET_DIR)/release/bundle/appimage/GSDB_$(VERSION)_amd64.AppImage"
 
 tag:
 	@echo "Creating git tag v$(VERSION)..."
@@ -48,7 +50,7 @@ push:
 release: build tag push-tag
 	@echo "Creating GitHub release v$(VERSION)..."
 	gh release create v$(VERSION) \
-		$(HOME)/.cargo_cache/release/bundle/appimage/GSDB_$(VERSION)_amd64.AppImage \
+		$(CARGO_TARGET_DIR)/release/bundle/appimage/GSDB_$(VERSION)_amd64.AppImage \
 		--title "GSDB v$(VERSION)" \
 		--notes "Release v$(VERSION) of GSDB - Database Management Tool"
 	@echo ""
@@ -97,7 +99,7 @@ aur:
 
 install:
 	@echo "Installing the binary to /usr/bin..."
-	sudo install -Dm755 $(HOME)/.cargo_cache/release/gsdb /usr/bin/gsdb
+	sudo install -Dm755 $(CARGO_TARGET_DIR)/release/gsdb /usr/bin/gsdb
 	sudo install -Dm644 pkg/aur/gsdb.desktop /usr/share/applications/gsdb.desktop
 	@echo "Installing icons..."
 	sudo install -Dm644 src-tauri/icons/32x32.png /usr/share/icons/hicolor/32x32/apps/gsdb.png
