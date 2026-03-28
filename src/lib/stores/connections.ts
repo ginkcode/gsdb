@@ -5,6 +5,9 @@ import { getPassword, setPassword, deletePassword } from "tauri-plugin-keyring-a
 import type { Connection, QueryTab } from "../types";
 
 const CONNECTIONS_STORE_KEY = "saved-connections";
+const TABS_STORE_KEY = "saved-tabs";
+const ACTIVE_TAB_STORE_KEY = "active-tab";
+const ACTIVE_CONNECTION_STORE_KEY = "active-connection";
 const KEYRING_SERVICE = "gsdb";
 
 export const connections = writable<Connection[]>([]);
@@ -73,11 +76,28 @@ export async function loadSavedConnections(): Promise<Connection[]> {
         }
       }
       
+      // Load saved tabs
+      const { tabs, activeTabId: savedActiveTabId, activeConnectionId: savedActiveConnectionId } = await loadTabs();
+      if (tabs.length > 0) {
+        queryTabs.set(tabs);
+        if (savedActiveTabId) {
+          activeTabId.set(savedActiveTabId);
+        }
+        if (savedActiveConnectionId) {
+          activeConnectionId.set(savedActiveConnectionId);
+        }
+      }
+      
+      // Setup tab persistence
+      setupTabPersistence();
+      
       return connectionsWithPasswords;
     }
   } catch (err) {
     console.error("[Connections] Failed to load saved connections:", err);
   }
+  // Setup tab persistence even if no connections
+  setupTabPersistence();
   return [];
 }
 
@@ -188,6 +208,59 @@ export async function reconnectConnection(connId: string): Promise<void> {
     console.error(`[Connections] Failed to reconnect ${connId}:`, err);
     throw err;
   }
+}
+
+// Save tabs to store
+async function saveTabs(tabs: QueryTab[], activeId: string | null, activeConnId: string | null): Promise<void> {
+  try {
+    const s = await getStore();
+    // Save tabs without results (too large and transient)
+    const tabsWithoutResults = tabs.map((t) => ({
+      ...t,
+      result: undefined,
+      isLoading: false,
+    }));
+    await s.set(TABS_STORE_KEY, tabsWithoutResults);
+    await s.set(ACTIVE_TAB_STORE_KEY, activeId);
+    await s.set(ACTIVE_CONNECTION_STORE_KEY, activeConnId);
+    await s.save();
+    console.log("[Tabs] Saved:", tabsWithoutResults.length, "tabs");
+  } catch (err) {
+    console.error("[Tabs] Failed to save tabs:", err);
+  }
+}
+
+// Load tabs from store
+async function loadTabs(): Promise<{ tabs: QueryTab[]; activeTabId: string | null; activeConnectionId: string | null }> {
+  try {
+    const s = await getStore();
+    const savedTabs = await s.get<QueryTab[]>(TABS_STORE_KEY);
+    const savedActiveTabId = await s.get<string>(ACTIVE_TAB_STORE_KEY);
+    const savedActiveConnectionId = await s.get<string>(ACTIVE_CONNECTION_STORE_KEY);
+    
+    if (savedTabs && savedTabs.length > 0) {
+      console.log("[Tabs] Loaded:", savedTabs.length, "tabs");
+      return {
+        tabs: savedTabs,
+        activeTabId: savedActiveTabId || null,
+        activeConnectionId: savedActiveConnectionId || null,
+      };
+    }
+  } catch (err) {
+    console.error("[Tabs] Failed to load tabs:", err);
+  }
+  return { tabs: [], activeTabId: null, activeConnectionId: null };
+}
+
+// Subscribe to tab changes and save them
+export function setupTabPersistence(): void {
+  queryTabs.subscribe((tabs) => {
+    let currentActiveTabId: string | null = null;
+    let currentActiveConnectionId: string | null = null;
+    activeTabId.subscribe((id) => { currentActiveTabId = id; })();
+    activeConnectionId.subscribe((id) => { currentActiveConnectionId = id; })();
+    saveTabs(tabs, currentActiveTabId, currentActiveConnectionId);
+  });
 }
 
 export function addTab(connectionId: string, sql = "", title = "Query"): QueryTab {
