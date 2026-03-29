@@ -24,6 +24,7 @@
     yellow: "bg-yellow-500/15 text-yellow-400 border-yellow-500/20",
     pink: "bg-pink-500/15 text-pink-400 border-pink-500/20",
     cyan: "bg-cyan-500/15 text-cyan-400 border-cyan-500/20",
+    indigo: "bg-indigo-500/15 text-indigo-400 border-indigo-500/20",
   };
 
   const driverLabel: Record<string, string> = {

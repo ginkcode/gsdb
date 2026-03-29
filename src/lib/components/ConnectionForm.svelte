@@ -75,6 +75,11 @@
       label: "Cyan",
       class: "bg-cyan-500/15 text-cyan-400 border-cyan-500/20",
     },
+    {
+      value: "indigo",
+      label: "Indigo",
+      class: "bg-indigo-500/15 text-indigo-400 border-indigo-500/20",
+    },
   ];
 
   const defaultPorts: Record<DbDriver, number> = {

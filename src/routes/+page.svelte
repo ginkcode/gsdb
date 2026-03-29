@@ -159,7 +159,7 @@
 <div
   class="h-screen bg-background text-foreground overflow-hidden font-sans antialiased flex flex-col {isMaximized
     ? 'rounded-none'
-    : 'rounded-lg border border-border'}"
+    : 'rounded-md border border-border'}"
 >
   <!-- Custom Title Bar -->
   <TitleBar />
