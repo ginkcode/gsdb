@@ -131,7 +131,7 @@
           keywordCase: "upper",
           indentStyle: "standard",
         });
-        
+
         view.dispatch({
           changes: { from: 0, to: text.length, insert: formatted },
         });
@@ -142,7 +142,7 @@
       // Split text into statements at semicolons
       const statements: string[] = [];
       let lastEnd = 0;
-      
+
       for (const semicolonPos of bounds) {
         const stmt = text.slice(lastEnd, semicolonPos).trim();
         if (stmt) {
@@ -150,7 +150,7 @@
         }
         lastEnd = semicolonPos + 1;
       }
-      
+
       // Get any remaining text after the last semicolon
       const remaining = text.slice(lastEnd).trim();
       if (remaining) {
@@ -158,17 +158,18 @@
       }
 
       // Format each statement and join with semicolons and newlines
-      const formattedStatements = statements.map(stmt => 
+      const formattedStatements = statements.map((stmt) =>
         formatSQL(stmt, {
           language: "sql",
           tabWidth: 2,
           keywordCase: "upper",
           indentStyle: "standard",
-        })
+        }),
       );
-      
-      const finalText = formattedStatements.join(';\n\n') + (remaining ? '' : ';');
-      
+
+      const finalText =
+        formattedStatements.join(";\n\n") + (remaining ? "" : ";");
+
       view.dispatch({
         changes: { from: 0, to: text.length, insert: finalText },
       });

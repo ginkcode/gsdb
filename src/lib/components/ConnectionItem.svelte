@@ -164,7 +164,9 @@
           <ChevronRight class="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
         {/if}
         <span
-          class="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border {getLabelColor(connection)}"
+          class="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border {getLabelColor(
+            connection,
+          )}"
         >
           {driverLabel[connection.driver]}
         </span>

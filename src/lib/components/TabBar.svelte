@@ -78,7 +78,9 @@
         >
           {#if conn}
             <span
-              class="text-[9px] font-bold px-1 py-0.5 rounded border {getLabelColor(conn)}"
+              class="text-[9px] font-bold px-1 py-0.5 rounded border {getLabelColor(
+                conn,
+              )}"
             >
               {driverLabel[conn.driver]}
             </span>

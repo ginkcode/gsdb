@@ -336,7 +336,6 @@
         isLoading={loadingTables.has(conn.id)}
         tables={connectionTables[conn.id] ?? []}
         isReconnecting={reconnectingConnections.has(conn.id)}
-        {driverLabel}
         onToggle={() => toggleConnection(conn.id)}
         onNewQuery={() => {
           activeConnectionId.set(conn.id);
