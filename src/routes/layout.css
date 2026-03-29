@@ -16,6 +16,24 @@
   font-family: "JetBrains Mono", "Fira Code", monospace !important;
 }
 
+/* CodeMirror dialog/info panel wrapper */
+.cm-editor-wrapper .cm-editor {
+  background: transparent;
+  font-size: 0.875rem;
+  height: auto;
+  min-height: 200px;
+}
+.cm-editor-wrapper .cm-editor .cm-scroller {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
+.cm-editor-wrapper .cm-editor .cm-content {
+  padding: 0;
+}
+.cm-editor-wrapper .cm-editor .cm-line {
+  padding: 0;
+}
+
 /* ScrollArea viewport fix for proper overflow */
 .cn-scroll-area-viewport {
   height: 100% !important;
@@ -30,6 +48,51 @@ input[type="number"]::-webkit-outer-spin-button {
 input[type="number"] {
   -moz-appearance: textfield;
   appearance: textfield;
+}
+
+/* CodeMirror internal scrollbar — overlay to match bits-ui ScrollArea */
+.cm-scroller {
+  overflow: overlay !important;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.cm-scroller::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.cm-scroller::-webkit-scrollbar-track {
+  background: transparent;
+}
+.cm-scroller::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: content-box;
+}
+.cm-scroller::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Native scrollbar styling — matches bits-ui ScrollArea */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 
 /* Hide scrollbar utility */

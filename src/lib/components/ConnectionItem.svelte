@@ -146,7 +146,7 @@
 <ContextMenu.Root>
   <ContextMenu.Trigger>
     <div
-      class="flex items-center gap-1 px-1 py-1 rounded-md group
+      class="flex items-center gap-1 px-1 py-1 rounded-md group min-w-0
             {isActive ? 'bg-accent' : 'hover:bg-accent/40'}"
     >
       <!-- Expand/collapse toggle -->

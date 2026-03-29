@@ -67,9 +67,9 @@
 
 <ContextMenu.Root>
   <ContextMenu.Trigger>
-    <div class="group flex items-center gap-1">
+    <div class="group flex items-center gap-1 min-w-0">
       <button
-        class="flex-1 flex items-center gap-2 px-2 py-1 rounded text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors text-left"
+        class="flex-1 min-w-0 flex items-center gap-2 px-2 py-1 rounded text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors text-left"
         onclick={onOpenTable}
       >
         <Table class="w-3 h-3 shrink-0" />

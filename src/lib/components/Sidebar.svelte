@@ -5,6 +5,7 @@
   import { Plus, Database } from "@lucide/svelte";
   import { save, open } from "@tauri-apps/plugin-dialog";
   import { Button } from "$lib/components/ui/button";
+  import { ScrollArea } from "$lib/components/ui/scroll-area";
   import {
     connections,
     activeConnectionId,
@@ -322,7 +323,7 @@
     </div>
   </div>
 
-  <div class="px-2 py-2 flex-1 overflow-y-auto">
+  <ScrollArea class="flex-1 h-0 px-2 py-2">
     <p
       class="px-2 mb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider"
     >
@@ -370,7 +371,7 @@
         <Plus class="w-3.5 h-3.5" /> Add connection
       </button>
     {/if}
-  </div>
+  </ScrollArea>
 
   <!-- Table Action Confirmation Dialog -->
   <TableActionDialog

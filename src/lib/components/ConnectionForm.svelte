@@ -172,7 +172,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+  <Dialog.Content class="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
     <Dialog.Header>
       <Dialog.Title
         >{editing ? "Edit Connection" : "New Connection"}</Dialog.Title

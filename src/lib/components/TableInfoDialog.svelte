@@ -2,8 +2,9 @@
   import { Button } from "$lib/components/ui/button";
   import * as Dialog from "$lib/components/ui/dialog";
   import { Copy, Loader } from "@lucide/svelte";
+  import { toast } from "svelte-sonner";
   import { onMount } from "svelte";
-  import { EditorView, lineNumbers } from "@codemirror/view";
+  import { EditorView } from "@codemirror/view";
   import { EditorState } from "@codemirror/state";
   import { sql, StandardSQL } from "@codemirror/lang-sql";
   import { oneDark } from "@codemirror/theme-one-dark";
@@ -25,7 +26,7 @@
   }: Props = $props();
 
   let editorEl: HTMLDivElement | undefined = $state();
-  let editorView: EditorView | undefined = $state();
+  let editorView: EditorView | undefined;
 
   onMount(() => {
     return () => {
@@ -39,7 +40,6 @@
       const state = EditorState.create({
         doc: definition,
         extensions: [
-          lineNumbers(),
           sql({
             dialect: StandardSQL,
           }),
@@ -58,6 +58,7 @@
   async function copyToClipboard() {
     if (definition) {
       await navigator.clipboard.writeText(definition);
+      toast.success("Copied table definition");
     }
   }
 </script>
@@ -92,22 +93,3 @@
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
-
-<style>
-  .cm-editor-wrapper :global(.cm-editor) {
-    background: transparent;
-    font-size: 0.875rem;
-    height: auto;
-    min-height: 200px;
-  }
-  .cm-editor-wrapper :global(.cm-editor .cm-scroller) {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      "Liberation Mono", "Courier New", monospace;
-  }
-  .cm-editor-wrapper :global(.cm-editor .cm-content) {
-    padding: 0;
-  }
-  .cm-editor-wrapper :global(.cm-editor .cm-line) {
-    padding: 0;
-  }
-</style>
