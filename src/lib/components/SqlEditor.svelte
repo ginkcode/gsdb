@@ -5,15 +5,18 @@
   import { sql } from "@codemirror/lang-sql";
   import { oneDark } from "@codemirror/theme-one-dark";
   import { Prec, Compartment } from "@codemirror/state";
+  import { format as formatSQL } from "sql-formatter";
 
   let {
     value = $bindable(""),
     onRun,
     runRef = $bindable(),
+    formatRef = $bindable(),
   }: {
     value?: string;
     onRun: (sql: string) => void;
     runRef?: () => void;
+    formatRef?: () => void;
   } = $props();
 
   let editorEl = $state<HTMLDivElement>();
@@ -115,8 +118,69 @@
     onRun(statementAtCursor(text, cursor));
   }
 
+  function formatAtCursor() {
+    const text = view.state.doc.toString();
+    const bounds = semicolonBoundaries(text);
+
+    try {
+      if (bounds.length === 0) {
+        // No semicolons - format entire text as single statement
+        const formatted = formatSQL(text.trim(), {
+          language: "sql",
+          tabWidth: 2,
+          keywordCase: "upper",
+          indentStyle: "standard",
+        });
+        
+        view.dispatch({
+          changes: { from: 0, to: text.length, insert: formatted },
+        });
+        value = view.state.doc.toString();
+        return;
+      }
+
+      // Split text into statements at semicolons
+      const statements: string[] = [];
+      let lastEnd = 0;
+      
+      for (const semicolonPos of bounds) {
+        const stmt = text.slice(lastEnd, semicolonPos).trim();
+        if (stmt) {
+          statements.push(stmt);
+        }
+        lastEnd = semicolonPos + 1;
+      }
+      
+      // Get any remaining text after the last semicolon
+      const remaining = text.slice(lastEnd).trim();
+      if (remaining) {
+        statements.push(remaining);
+      }
+
+      // Format each statement and join with semicolons and newlines
+      const formattedStatements = statements.map(stmt => 
+        formatSQL(stmt, {
+          language: "sql",
+          tabWidth: 2,
+          keywordCase: "upper",
+          indentStyle: "standard",
+        })
+      );
+      
+      const finalText = formattedStatements.join(';\n\n') + (remaining ? '' : ';');
+      
+      view.dispatch({
+        changes: { from: 0, to: text.length, insert: finalText },
+      });
+      value = view.state.doc.toString();
+    } catch (err) {
+      console.error("Failed to format SQL:", err);
+    }
+  }
+
   onMount(() => {
     runRef = runAtCursor;
+    formatRef = formatAtCursor;
 
     // Light theme extension
     const lightTheme = EditorView.theme(
