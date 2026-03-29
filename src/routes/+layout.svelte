@@ -6,8 +6,8 @@
 
     const { children } = $props();
 
-    let systemTheme: "light" | "dark" = "light";
-    let currentTheme: "light" | "dark" | "system" = "system";
+    let systemTheme = $state<"light" | "dark">("light");
+    let currentTheme = $state<"light" | "dark" | "system">("system");
 
     function applyTheme(themeValue: "light" | "dark" | "system") {
         const isDark =
@@ -62,5 +62,5 @@
     });
 </script>
 
-<Toaster />
+<Toaster theme={currentTheme === "system" ? systemTheme : currentTheme} />
 {@render children()}

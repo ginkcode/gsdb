@@ -12,9 +12,10 @@
   }: {
     open: boolean;
     editing: Connection | null;
-    onSave: (conn: Connection) => void;
+    onSave: (conn: Connection) => Promise<boolean>;
   } = $props();
 
+  let connecting = $state(false);
   let driver = $state<DbDriver>("postgres");
   let name = $state("");
   let color = $state("blue");
@@ -24,6 +25,32 @@
   let username = $state("");
   let password = $state("");
   let filePath = $state("");
+
+  // SSL mode (postgres + mysql)
+  let sslMode = $state("prefer");
+
+  const sslModeOptions: Record<string, { value: string; label: string }[]> = {
+    postgres: [
+      { value: "disable", label: "disable" },
+      { value: "allow", label: "allow" },
+      { value: "prefer", label: "prefer (default)" },
+      { value: "require", label: "require" },
+      { value: "verify-ca", label: "verify-ca" },
+      { value: "verify-full", label: "verify-full" },
+    ],
+    mysql: [
+      { value: "disabled", label: "disabled" },
+      { value: "preferred", label: "preferred (default)" },
+      { value: "required", label: "required" },
+      { value: "verify_ca", label: "verify_ca" },
+      { value: "verify_identity", label: "verify_identity" },
+    ],
+  };
+
+  const defaultSslMode: Record<string, string> = {
+    postgres: "prefer",
+    mysql: "preferred",
+  };
 
   // SSH tunnel fields
   let useSsh = $state(false);
@@ -102,6 +129,7 @@
         username = editing.username ?? "";
         password = editing.password ?? "";
         filePath = editing.filePath ?? "";
+        sslMode = editing.sslMode ?? "prefer";
 
         // SSH fields
         useSsh = !!editing.ssh;
@@ -131,6 +159,7 @@
         username = "";
         password = "";
         filePath = "";
+        sslMode = "prefer";
         useSsh = false;
         sshHost = "";
         sshPort = 22;
@@ -146,9 +175,10 @@
     if (!v) return;
     driver = v as DbDriver;
     port = defaultPorts[driver];
+    sslMode = defaultSslMode[driver] ?? "prefer";
   }
 
-  function submit() {
+  async function submit() {
     const ssh: SshTunnel | undefined =
       useSsh && driver !== "sqlite"
         ? {
@@ -169,10 +199,13 @@
       database,
       ...(driver !== "sqlite" ? { host, port, username, password } : {}),
       ...(driver === "sqlite" ? { filePath } : {}),
+      ...(driver === "postgres" || driver === "mysql" ? { sslMode } : {}),
       ...(ssh ? { ssh } : {}),
     };
-    onSave(conn);
-    open = false;
+    connecting = true;
+    const ok = await onSave(conn);
+    connecting = false;
+    if (ok) open = false;
   }
 </script>
 
@@ -196,7 +229,7 @@
       </div>
 
       <div class="grid gap-1.5">
-        <label class="text-sm font-medium">Label Color</label>
+        <span class="text-sm font-medium">Label Color</span>
         <div class="flex flex-wrap gap-2">
           {#each colorOptions as opt}
             <button
@@ -260,6 +293,23 @@
             <Input id="conn-pass" type="password" bind:value={password} />
           </div>
         </div>
+
+        <!-- SSL Mode (postgres + mysql) -->
+        {#if driver === "postgres" || driver === "mysql"}
+          <div class="grid gap-1.5">
+            <label class="text-sm font-medium" for="conn-ssl">SSL Mode</label>
+            <Select.Root type="single" value={sslMode} onValueChange={(v) => { if (v) sslMode = v; }}>
+              <Select.Trigger id="conn-ssl">
+                {sslMode}
+              </Select.Trigger>
+              <Select.Content>
+                {#each sslModeOptions[driver] as opt}
+                  <Select.Item value={opt.value}>{opt.label}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
+        {/if}
 
         <!-- SSH Tunnel Section -->
         <div class="border-t border-border pt-4 mt-2">
@@ -354,7 +404,9 @@
       <Dialog.Close>
         <Button variant="outline">Cancel</Button>
       </Dialog.Close>
-      <Button onclick={submit}>Connect</Button>
+      <Button onclick={submit} disabled={connecting}>
+        {connecting ? "Connecting…" : "Connect"}
+      </Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>

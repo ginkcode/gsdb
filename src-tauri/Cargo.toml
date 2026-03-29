@@ -1,6 +1,6 @@
 [package]
 name = "gsdb"
-version = "0.2.23"
+version = "0.2.24"
 description = "A database management tool"
 authors = ["you"]
 edition = "2021"
@@ -23,7 +23,7 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", features = [
-    "runtime-tokio",
+    "runtime-tokio-rustls",
     "postgres",
     "mysql",
     "sqlite",

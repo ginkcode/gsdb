@@ -36,6 +36,8 @@ pub struct Connection {
     #[serde(rename = "filePath")]
     pub file_path: Option<String>,
     pub ssh: Option<SshConfig>,
+    #[serde(rename = "sslMode")]
+    pub ssl_mode: Option<String>,
 }
 
 /// Active SSH tunnel that keeps the session alive
@@ -133,20 +135,22 @@ impl Connection {
     pub fn to_url(&self) -> String {
         match self.driver.as_str() {
             "postgres" => format!(
-                "postgres://{}:{}@{}:{}/{}",
+                "postgres://{}:{}@{}:{}/{}?sslmode={}",
                 self.username.as_deref().unwrap_or(""),
                 self.password.as_deref().unwrap_or(""),
                 self.host.as_deref().unwrap_or("localhost"),
                 self.port.unwrap_or(5432),
-                self.database
+                self.database,
+                self.ssl_mode.as_deref().unwrap_or("prefer")
             ),
             "mysql" => format!(
-                "mysql://{}:{}@{}:{}/{}",
+                "mysql://{}:{}@{}:{}/{}?ssl-mode={}",
                 self.username.as_deref().unwrap_or(""),
                 self.password.as_deref().unwrap_or(""),
                 self.host.as_deref().unwrap_or("localhost"),
                 self.port.unwrap_or(3306),
-                self.database
+                self.database,
+                self.ssl_mode.as_deref().unwrap_or("preferred")
             ),
             "sqlite" => format!(
                 "sqlite://{}",
@@ -159,18 +163,20 @@ impl Connection {
     pub fn to_url_via_tunnel(&self, local_port: u16) -> String {
         match self.driver.as_str() {
             "postgres" => format!(
-                "postgres://{}:{}@127.0.0.1:{}/{}",
+                "postgres://{}:{}@127.0.0.1:{}/{}?sslmode={}",
                 self.username.as_deref().unwrap_or(""),
                 self.password.as_deref().unwrap_or(""),
                 local_port,
-                self.database
+                self.database,
+                self.ssl_mode.as_deref().unwrap_or("prefer")
             ),
             "mysql" => format!(
-                "mysql://{}:{}@127.0.0.1:{}/{}",
+                "mysql://{}:{}@127.0.0.1:{}/{}?ssl-mode={}",
                 self.username.as_deref().unwrap_or(""),
                 self.password.as_deref().unwrap_or(""),
                 local_port,
-                self.database
+                self.database,
+                self.ssl_mode.as_deref().unwrap_or("preferred")
             ),
             _ => self.to_url(),
         }

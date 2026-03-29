@@ -14,6 +14,7 @@
   import ConnectionForm from "$lib/components/ConnectionForm.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
+  import { toast } from "svelte-sonner";
   import {
     connections,
     activeConnectionId,
@@ -73,21 +74,21 @@
     };
   });
 
-  async function saveConnection(conn: Connection) {
+  async function saveConnection(conn: Connection): Promise<boolean> {
     try {
       if (editingConnection) {
-        // Editing existing connection
         await updateConnection(conn);
         editingConnection = null;
       } else {
-        // New connection
         await invoke("add_connection", { connection: conn });
         await addConnection(conn);
         activeConnectionId.set(conn.id);
         addTab(conn.id);
       }
+      return true;
     } catch (err) {
-      console.error("Connection failed:", err);
+      toast.error("Connection failed", { description: String(err) });
+      return false;
     }
   }
 

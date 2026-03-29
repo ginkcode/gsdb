@@ -21,6 +21,7 @@ export interface Connection {
   password?: string;
   filePath?: string; // for SQLite
   ssh?: SshTunnel; // SSH tunnel configuration
+  sslMode?: string; // postgres: disable | allow | prefer | require | verify-ca | verify-full
 }
 
 export interface QueryResult {
