@@ -13,6 +13,7 @@ export interface Connection {
   id: string;
   name: string;
   driver: DbDriver;
+  color?: string; // Label color
   host?: string;
   port?: number;
   database: string;

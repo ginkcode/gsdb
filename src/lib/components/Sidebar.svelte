@@ -43,12 +43,6 @@
   let tableInfoDefinition = $state("");
   let tableInfoLoading = $state(false);
 
-  const driverColors: Record<string, string> = {
-    postgres: "bg-blue-500/15 text-blue-400 border-blue-500/20",
-    mysql: "bg-orange-500/15 text-orange-400 border-orange-500/20",
-    sqlite: "bg-green-500/15 text-green-400 border-green-500/20",
-  };
-
   const driverLabel: Record<string, string> = {
     postgres: "PG",
     mysql: "MY",
@@ -342,7 +336,6 @@
         isLoading={loadingTables.has(conn.id)}
         tables={connectionTables[conn.id] ?? []}
         isReconnecting={reconnectingConnections.has(conn.id)}
-        {driverColors}
         {driverLabel}
         onToggle={() => toggleConnection(conn.id)}
         onNewQuery={() => {

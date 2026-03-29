@@ -17,6 +17,7 @@
 
     let driver = $state<DbDriver>("postgres");
     let name = $state("");
+    let color = $state("blue");
     let host = $state("localhost");
     let port = $state(5432);
     let database = $state("");
@@ -33,6 +34,17 @@
     let sshPrivateKey = $state("");
     let sshPrivateKeyPassphrase = $state("");
 
+    const colorOptions = [
+        { value: "blue", label: "Blue", class: "bg-blue-500/15 text-blue-400 border-blue-500/20" },
+        { value: "green", label: "Green", class: "bg-green-500/15 text-green-400 border-green-500/20" },
+        { value: "orange", label: "Orange", class: "bg-orange-500/15 text-orange-400 border-orange-500/20" },
+        { value: "purple", label: "Purple", class: "bg-purple-500/15 text-purple-400 border-purple-500/20" },
+        { value: "red", label: "Red", class: "bg-red-500/15 text-red-400 border-red-500/20" },
+        { value: "yellow", label: "Yellow", class: "bg-yellow-500/15 text-yellow-400 border-yellow-500/20" },
+        { value: "pink", label: "Pink", class: "bg-pink-500/15 text-pink-400 border-pink-500/20" },
+        { value: "cyan", label: "Cyan", class: "bg-cyan-500/15 text-cyan-400 border-cyan-500/20" },
+    ];
+
     const defaultPorts: Record<DbDriver, number> = {
         postgres: 5432,
         mysql: 3306,
@@ -46,6 +58,7 @@
                 // Populate form with existing connection data
                 driver = editing.driver;
                 name = editing.name;
+                color = editing.color ?? "blue";
                 host = editing.host ?? "localhost";
                 port = editing.port ?? defaultPorts[editing.driver];
                 database = editing.database;
@@ -75,6 +88,7 @@
                 // Reset to defaults for new connection
                 driver = "postgres";
                 name = "";
+                color = "blue";
                 host = "localhost";
                 port = 5432;
                 database = "";
@@ -116,6 +130,7 @@
             id: editing?.id ?? crypto.randomUUID(),
             name: name || `${driver}/${database}`,
             driver,
+            color,
             database,
             ...(driver !== "sqlite" ? { host, port, username, password } : {}),
             ...(driver === "sqlite" ? { filePath } : {}),
@@ -147,6 +162,21 @@
                     bind:value={name}
                     placeholder="My Database"
                 />
+            </div>
+
+            <div class="grid gap-1.5">
+                <label class="text-sm font-medium">Label Color</label>
+                <div class="flex flex-wrap gap-2">
+                    {#each colorOptions as opt}
+                        <button
+                            type="button"
+                            class="px-3 py-1.5 text-xs font-bold rounded border transition-all {opt.class} {color === opt.value ? 'ring-2 ring-offset-1 ring-offset-background' : 'opacity-60 hover:opacity-100'}"
+                            onclick={() => color = opt.value}
+                        >
+                            {opt.label}
+                        </button>
+                    {/each}
+                </div>
             </div>
 
             <div class="grid gap-1.5">

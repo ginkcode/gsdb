@@ -8,10 +8,15 @@
   } from "$lib/stores/connections";
   import * as ContextMenu from "$lib/components/ui/context-menu";
 
-  const driverColors: Record<string, string> = {
-    postgres: "bg-blue-500/15 text-blue-400 border-blue-500/20",
-    mysql: "bg-orange-500/15 text-orange-400 border-orange-500/20",
-    sqlite: "bg-green-500/15 text-green-400 border-green-500/20",
+  const colorClasses: Record<string, string> = {
+    blue: "bg-blue-500/15 text-blue-400 border-blue-500/20",
+    green: "bg-green-500/15 text-green-400 border-green-500/20",
+    orange: "bg-orange-500/15 text-orange-400 border-orange-500/20",
+    purple: "bg-purple-500/15 text-purple-400 border-purple-500/20",
+    red: "bg-red-500/15 text-red-400 border-red-500/20",
+    yellow: "bg-yellow-500/15 text-yellow-400 border-yellow-500/20",
+    pink: "bg-pink-500/15 text-pink-400 border-pink-500/20",
+    cyan: "bg-cyan-500/15 text-cyan-400 border-cyan-500/20",
   };
 
   const driverLabel: Record<string, string> = {
@@ -19,6 +24,10 @@
     mysql: "MY",
     sqlite: "SQ",
   };
+
+  function getLabelColor(conn: { driver: string; color?: string }): string {
+    return colorClasses[conn.color ?? "blue"] ?? colorClasses.blue;
+  }
 
   function closeOtherTabs(keepTabId: string) {
     const tabsToClose = $queryTabs
@@ -69,9 +78,7 @@
         >
           {#if conn}
             <span
-              class="text-[9px] font-bold px-1 py-0.5 rounded border {driverColors[
-                conn.driver
-              ]}"
+              class="text-[9px] font-bold px-1 py-0.5 rounded border {getLabelColor(conn)}"
             >
               {driverLabel[conn.driver]}
             </span>
