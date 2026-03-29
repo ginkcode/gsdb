@@ -109,14 +109,16 @@
 {:else}
     <div class="flex flex-col h-full overflow-hidden">
         <ScrollArea class="flex-1 h-0" orientation="both">
-            <table class="text-sm border-collapse font-mono">
+            <table class="text-sm font-mono border-collapse">
                 <thead class="sticky top-0 z-10">
                     <tr>
+                        <!-- Row number header -->
+                        <th class="px-2 py-2 text-right text-xs text-muted-foreground/50 bg-muted border-b border-r border-border select-none w-10 min-w-10">
+                            #
+                        </th>
                         {#each result.columns as col}
-                            <th
-                                class="px-3 py-2 text-left font-semibold text-xs text-muted-foreground uppercase tracking-wider bg-muted border-b border-border whitespace-nowrap"
-                            >
-                                {col}
+                            <th class="px-3 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider bg-muted border-b border-r border-border whitespace-nowrap max-w-48">
+                                <div class="truncate" title={col}>{col}</div>
                             </th>
                         {/each}
                     </tr>
@@ -124,32 +126,28 @@
                 <tbody>
                     {#each result.rows as row, i}
                         <tr
-                            class="border-b border-border/50 hover:bg-muted/40 transition-colors cursor-pointer {isRowSelected(
-                                row,
-                            )
-                                ? 'bg-accent'
-                                : ''}"
+                            class="border-b border-border/40 transition-colors cursor-pointer
+                                {isRowSelected(row)
+                                    ? 'bg-accent'
+                                    : i % 2 === 0
+                                        ? 'bg-background hover:bg-muted/50'
+                                        : 'bg-muted/20 hover:bg-muted/50'}"
                             onclick={() => onRowSelect(row)}
                         >
+                            <!-- Row number -->
+                            <td class="px-2 py-1.5 text-right text-xs text-muted-foreground/40 border-r border-border/40 select-none tabular-nums">
+                                {i + 1}
+                            </td>
                             {#each result.columns as col}
                                 {@const value = formatValue(row[col])}
                                 {@const truncated = truncateText(value)}
-                                <td
-                                    class="px-3 py-1.5 whitespace-nowrap text-foreground/90"
-                                >
+                                <td class="px-3 py-1.5 border-r border-border/40 max-w-xs">
                                     {#if row[col] === null || row[col] === undefined}
-                                        <span
-                                            class="text-muted-foreground italic text-xs"
-                                            >NULL</span
-                                        >
+                                        <span class="text-muted-foreground/60 italic text-xs">NULL</span>
                                     {:else if truncated.truncated}
-                                        <span
-                                            title={truncated.full}
-                                            class="cursor-default"
-                                            >{truncated.display}</span
-                                        >
+                                        <span title={truncated.full} class="block truncate text-foreground/90">{truncated.display}</span>
                                     {:else}
-                                        {truncated.display}
+                                        <span class="block truncate text-foreground/90">{truncated.display}</span>
                                     {/if}
                                 </td>
                             {/each}
@@ -158,19 +156,9 @@
                 </tbody>
             </table>
         </ScrollArea>
-        <div
-            class="flex items-center justify-between px-3 py-1.5 text-xs text-muted-foreground border-t border-border shrink-0"
-        >
-            <span>
-                {result.rows.length}
-                {result.rows.length === 1 ? "row" : "rows"}
-            </span>
-            <Button
-                variant="ghost"
-                size="sm"
-                class="h-6 gap-1.5 text-xs"
-                onclick={exportToCSV}
-            >
+        <div class="flex items-center justify-between px-3 py-1.5 text-xs text-muted-foreground border-t border-border shrink-0">
+            <span>{result.rows.length} {result.rows.length === 1 ? "row" : "rows"}</span>
+            <Button variant="ghost" size="sm" class="h-6 gap-1.5 text-xs" onclick={exportToCSV}>
                 <Download class="w-3 h-3" />
                 Export CSV
             </Button>
