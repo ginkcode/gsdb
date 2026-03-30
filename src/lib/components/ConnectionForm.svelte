@@ -74,6 +74,23 @@
     sshKeySaved = false;
   }
 
+  async function pickSqliteFile() {
+    const path = await openFileDialog({
+      multiple: false,
+      directory: false,
+      filters: [
+        {
+          name: "SQLite Database",
+          extensions: ["sqlite", "sqlite3", "db", "db3"],
+        },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    });
+    if (path) {
+      filePath = path as string;
+    }
+  }
+
   const colorOptions = [
     {
       value: "blue",
@@ -315,7 +332,13 @@
         {#if driver === "postgres" || driver === "mysql"}
           <div class="grid gap-1.5">
             <label class="text-sm font-medium" for="conn-ssl">SSL Mode</label>
-            <Select.Root type="single" value={sslMode} onValueChange={(v) => { if (v) sslMode = v; }}>
+            <Select.Root
+              type="single"
+              value={sslMode}
+              onValueChange={(v) => {
+                if (v) sslMode = v;
+              }}
+            >
               <Select.Trigger id="conn-ssl">
                 {sslMode}
               </Select.Trigger>
@@ -380,18 +403,30 @@
             </div>
             <div class="grid gap-1.5">
               <div class="flex items-center justify-between">
-                <label class="text-sm font-medium" for="ssh-key">Private Key</label>
-                <Button variant="outline" size="sm" class="h-7 text-xs" onclick={pickKeyFile}>
+                <label class="text-sm font-medium" for="ssh-key"
+                  >Private Key</label
+                >
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="h-7 text-xs"
+                  onclick={pickKeyFile}
+                >
                   Select file…
                 </Button>
               </div>
               {#if sshKeySaved}
-                <div class="flex items-center justify-between rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                <div
+                  class="flex items-center justify-between rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+                >
                   <span>Key saved — leave unchanged or replace below</span>
                   <button
                     type="button"
                     class="text-xs underline hover:text-foreground"
-                    onclick={() => { sshKeySaved = false; sshPrivateKey = ""; }}
+                    onclick={() => {
+                      sshKeySaved = false;
+                      sshPrivateKey = "";
+                    }}
                   >
                     Clear
                   </button>
@@ -426,7 +461,17 @@
         {/if}
       {:else}
         <div class="grid gap-1.5">
-          <label class="text-sm font-medium" for="conn-path">File Path</label>
+          <div class="flex items-center justify-between">
+            <label class="text-sm font-medium" for="conn-path">File Path</label>
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-7 text-xs"
+              onclick={pickSqliteFile}
+            >
+              Browse…
+            </Button>
+          </div>
           <Input
             id="conn-path"
             bind:value={filePath}

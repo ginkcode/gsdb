@@ -24,6 +24,11 @@ export interface Connection {
   sslMode?: string; // postgres: disable | allow | prefer | require | verify-ca | verify-full
 }
 
+export interface TableInfo {
+  name: string;
+  kind: "table" | "view";
+}
+
 export interface QueryResult {
   columns: string[];
   rows: Record<string, unknown>[];

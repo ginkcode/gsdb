@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use tauri::State;
 use tokio::sync::Mutex;
 
-use crate::db::{Connection, DbPool, QueryResult};
+use crate::db::{Connection, DbPool, QueryResult, TableInfo};
 
 #[derive(serde::Serialize)]
 pub struct FilePreview {
@@ -90,7 +90,7 @@ pub async fn run_query(
 pub async fn list_tables(
     connection_id: String,
     state: State<'_, AppState>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<TableInfo>, String> {
     let pool = {
         let pools = state.pools.lock().await;
         pools
@@ -132,7 +132,9 @@ pub async fn create_database(
             .clone()
     };
 
-    pool.create_database(&db_name).await.map_err(|e| e.to_string())
+    pool.create_database(&db_name)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

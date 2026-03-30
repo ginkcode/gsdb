@@ -13,7 +13,7 @@
     Loader,
     Database,
   } from "@lucide/svelte";
-  import type { Connection } from "$lib/types";
+  import type { Connection, TableInfo } from "$lib/types";
   import TableItem from "./TableItem.svelte";
 
   const colorClasses: Record<string, string> = {
@@ -39,7 +39,7 @@
     isActive: boolean;
     isExpanded: boolean;
     isLoading: boolean;
-    tables: string[];
+    tables: TableInfo[];
     isReconnecting: boolean;
     onToggle: () => void;
     onNewQuery: () => void;
@@ -56,9 +56,9 @@
     onShowTableInfo: (tableName: string) => void;
     onExportTable: (tableName: string) => void;
     onImportTable: (tableName: string) => void;
-    onDeleteTable: (tableName: string) => void;
-    onTruncateTable: (tableName: string) => void;
-    onDropTable: (tableName: string) => void;
+    onDeleteTable: (tableName: string, tableKind: "table" | "view") => void;
+    onTruncateTable: (tableName: string, tableKind: "table" | "view") => void;
+    onDropTable: (tableName: string, tableKind: "table" | "view") => void;
   }
 
   let {
@@ -244,15 +244,16 @@
     {/if}
     {#each tables as table}
       <TableItem
-        tableName={table}
-        onOpenTable={() => onOpenTable(table)}
-        onPreviewTable={() => onPreviewTable(table)}
-        onShowInfo={() => onShowTableInfo(table)}
-        onExport={() => onExportTable(table)}
-        onImport={() => onImportTable(table)}
-        onDelete={() => onDeleteTable(table)}
-        onTruncate={() => onTruncateTable(table)}
-        onDrop={() => onDropTable(table)}
+        tableName={table.name}
+        tableKind={table.kind}
+        onOpenTable={() => onOpenTable(table.name)}
+        onPreviewTable={() => onPreviewTable(table.name)}
+        onShowInfo={() => onShowTableInfo(table.name)}
+        onExport={() => onExportTable(table.name)}
+        onImport={() => onImportTable(table.name)}
+        onDelete={() => onDeleteTable(table.name, table.kind)}
+        onTruncate={() => onTruncateTable(table.name, table.kind)}
+        onDrop={() => onDropTable(table.name, table.kind)}
       />
     {/each}
   </div>

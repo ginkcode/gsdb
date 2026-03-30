@@ -16,7 +16,7 @@
     updateConnection,
     closeTabsByConnection,
   } from "$lib/stores/connections";
-  import type { Connection } from "$lib/types";
+  import type { Connection, TableInfo } from "$lib/types";
   import ConnectionItem from "./ConnectionItem.svelte";
   import TableActionDialog from "./TableActionDialog.svelte";
   import ImportSqlDialog from "./ImportSqlDialog.svelte";
@@ -38,7 +38,7 @@
   } = $props();
 
   let expandedConnections = $state<Set<string>>(new Set());
-  let connectionTables = $state<Record<string, string[]>>({});
+  let connectionTables = $state<Record<string, TableInfo[]>>({});
   let loadingTables = $state<Set<string>>(new Set());
   let reconnectingConnections = $state<Set<string>>(new Set());
 
@@ -67,7 +67,7 @@
       if (!connectionTables[connId]) {
         loadingTables = new Set([...loadingTables, connId]);
         try {
-          const tables: string[] = await invoke("list_tables", {
+          const tables: TableInfo[] = await invoke("list_tables", {
             connectionId: connId,
           });
           connectionTables = {
@@ -89,7 +89,7 @@
   async function refreshTables(connId: string) {
     loadingTables = new Set([...loadingTables, connId]);
     try {
-      const tables: string[] = await invoke("list_tables", {
+      const tables: TableInfo[] = await invoke("list_tables", {
         connectionId: connId,
       });
       connectionTables = { ...connectionTables, [connId]: tables };
@@ -155,7 +155,11 @@
 
   async function handleChangeDatabase(database: string) {
     if (!changeDatabaseConnection) return;
-    const updated = { ...changeDatabaseConnection, database, name: `${changeDatabaseConnection.driver}/${database}` };
+    const updated = {
+      ...changeDatabaseConnection,
+      database,
+      name: `${changeDatabaseConnection.driver}/${database}`,
+    };
     try {
       await invoke("add_connection", { connection: updated });
       closeTabsByConnection(updated.id);
@@ -171,6 +175,7 @@
   let tableActionDialogOpen = $state(false);
   let tableActionConnId = $state("");
   let tableActionTableName = $state("");
+  let tableActionTableKind = $state<"table" | "view">("table");
   let tableActionType = $state<TableActionType>("delete");
   let tableActionSql = $state("");
   let tableActionLoading = $state(false);
@@ -179,6 +184,7 @@
     type: TableActionType,
     connId: string,
     tableName: string,
+    tableKind: "table" | "view",
     driver: string,
   ) {
     const q = driver === "mysql" ? `\`${tableName}\`` : `"${tableName}"`;
@@ -188,10 +194,11 @@
     } else if (type === "truncate") {
       sql = driver === "sqlite" ? `DELETE FROM ${q}` : `TRUNCATE TABLE ${q}`;
     } else {
-      sql = `DROP TABLE ${q}`;
+      sql = tableKind === "view" ? `DROP VIEW ${q}` : `DROP TABLE ${q}`;
     }
     tableActionConnId = connId;
     tableActionTableName = tableName;
+    tableActionTableKind = tableKind;
     tableActionType = type;
     tableActionSql = sql;
     tableActionDialogOpen = true;
@@ -210,7 +217,7 @@
           ...connectionTables,
           [tableActionConnId]: (
             connectionTables[tableActionConnId] ?? []
-          ).filter((t) => t !== tableActionTableName),
+          ).filter((t) => t.name !== tableActionTableName),
         };
       }
       toast.success(
@@ -218,7 +225,9 @@
           ? `All rows deleted from "${tableActionTableName}"`
           : tableActionType === "truncate"
             ? `Table "${tableActionTableName}" truncated`
-            : `Table "${tableActionTableName}" dropped`,
+            : tableActionTableKind === "view"
+              ? `View "${tableActionTableName}" dropped`
+              : `Table "${tableActionTableName}" dropped`,
       );
     } catch (err) {
       toast.error(`Operation failed: ${err}`);
@@ -379,16 +388,20 @@
         onOpenTable={(table) =>
           openTableTab(conn.id, table, `SELECT * FROM ${table} LIMIT 100;`)}
         onPreviewTable={(table) =>
-          openTableTabPreview(conn.id, table, `SELECT * FROM ${table} LIMIT 100;`)}
+          openTableTabPreview(
+            conn.id,
+            table,
+            `SELECT * FROM ${table} LIMIT 100;`,
+          )}
         onShowTableInfo={(table) => showTableInfo(conn.id, table)}
         onExportTable={(table) => exportTable(conn.id, table)}
         onImportTable={() => importSql(conn.id)}
-        onDeleteTable={(table) =>
-          openTableAction("delete", conn.id, table, conn.driver)}
-        onTruncateTable={(table) =>
-          openTableAction("truncate", conn.id, table, conn.driver)}
-        onDropTable={(table) =>
-          openTableAction("drop", conn.id, table, conn.driver)}
+        onDeleteTable={(table, kind) =>
+          openTableAction("delete", conn.id, table, kind, conn.driver)}
+        onTruncateTable={(table, kind) =>
+          openTableAction("truncate", conn.id, table, kind, conn.driver)}
+        onDropTable={(table, kind) =>
+          openTableAction("drop", conn.id, table, kind, conn.driver)}
       />
     {/each}
 

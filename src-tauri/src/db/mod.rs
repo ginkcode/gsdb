@@ -7,6 +7,14 @@ use std::net::TcpStream;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+// ── Table info (table vs view) ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TableInfo {
+    pub name: String,
+    pub kind: String, // "table" or "view"
+}
+
 // ── SSH Tunnel config ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -328,46 +336,63 @@ impl DbPool {
         }
     }
 
-    pub async fn list_tables(&self) -> Result<Vec<String>, sqlx::Error> {
+    pub async fn list_tables(&self) -> Result<Vec<TableInfo>, sqlx::Error> {
         match self {
             DbPool::Postgres(pool) => {
                 let rows = sqlx::query(
-                    "SELECT table_name FROM information_schema.tables \
-                     WHERE table_schema = 'public' ORDER BY table_name",
+                    "SELECT table_name, table_type FROM information_schema.tables \
+                     WHERE table_schema = 'public' AND table_type IN ('BASE TABLE', 'VIEW') \
+                     ORDER BY table_name",
                 )
                 .fetch_all(pool)
                 .await?;
                 Ok(rows
                     .iter()
-                    .map(|r| r.try_get::<String, _>(0).unwrap_or_default())
+                    .map(|r| TableInfo {
+                        name: r.try_get::<String, _>(0).unwrap_or_default(),
+                        kind: if r.try_get::<String, _>(1).unwrap_or_default() == "VIEW" {
+                            "view".to_string()
+                        } else {
+                            "table".to_string()
+                        },
+                    })
                     .collect())
             }
             DbPool::Mysql(pool) => {
                 let rows = sqlx::query(
-                    "SELECT TABLE_NAME FROM information_schema.TABLES \
-                     WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME",
+                    "SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES \
+                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE IN ('BASE TABLE', 'VIEW') \
+                     ORDER BY TABLE_NAME",
                 )
                 .fetch_all(pool)
                 .await?;
                 Ok(rows
                     .iter()
-                    .map(|r| {
-                        r.try_get::<String, _>(0).unwrap_or_else(|_| {
+                    .map(|r| TableInfo {
+                        name: r.try_get::<String, _>(0).unwrap_or_else(|_| {
                             r.try_get::<Vec<u8>, _>(0)
                                 .map(|b| String::from_utf8_lossy(&b).into_owned())
                                 .unwrap_or_default()
-                        })
+                        }),
+                        kind: if r.try_get::<String, _>(1).unwrap_or_default() == "VIEW" {
+                            "view".to_string()
+                        } else {
+                            "table".to_string()
+                        },
                     })
                     .collect())
             }
             DbPool::Sqlite(pool) => {
                 let rows =
-                    sqlx::query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                    sqlx::query("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name")
                         .fetch_all(pool)
                         .await?;
                 Ok(rows
                     .iter()
-                    .map(|r| r.try_get::<String, _>(0).unwrap_or_default())
+                    .map(|r| TableInfo {
+                        name: r.try_get::<String, _>(0).unwrap_or_default(),
+                        kind: r.try_get::<String, _>(1).unwrap_or_default(),
+                    })
                     .collect())
             }
         }
@@ -540,7 +565,7 @@ impl DbPool {
             }
             DbPool::Sqlite(pool) => {
                 let rows = sqlx::query(&format!(
-                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?"
+                    "SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name=?"
                 ))
                 .bind(table_name)
                 .fetch_all(pool)
@@ -827,6 +852,17 @@ async fn sqlite_query(pool: &sqlx::SqlitePool, sql: &str) -> Result<QueryResult,
 }
 
 fn sqlite_value(row: &sqlx::sqlite::SqliteRow, idx: usize) -> Value {
+    use sqlx::ValueRef;
+
+    // Check for NULL first before attempting any type conversion
+    // sqlx's try_get can return default values (0 for integers, "" for strings)
+    // when the column is NULL, so we must check explicitly.
+    if let Ok(raw) = row.try_get_raw(idx) {
+        if raw.is_null() {
+            return Value::Null;
+        }
+    }
+
     // SQLite is dynamically typed — try in priority order
     // IMPORTANT: Check integers BEFORE booleans because sqlx's try_get::<bool>
     // succeeds for integer values (0 = false, non-zero = true), which would
@@ -994,8 +1030,8 @@ impl DbPool {
         );
 
         for table in self.list_tables().await? {
-            out.push_str(&format!("-- Table: {}\n", table));
-            out.push_str(&self.export_table_sql(&table).await?);
+            out.push_str(&format!("-- Table: {}\n", table.name));
+            out.push_str(&self.export_table_sql(&table.name).await?);
         }
 
         out.push_str("COMMIT;\n");

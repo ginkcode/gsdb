@@ -3,6 +3,7 @@
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
   import {
     Table,
+    Eye,
     Download,
     Upload,
     Info,
@@ -12,8 +13,9 @@
 
   interface Props {
     tableName: string;
-    onOpenTable: () => void;       // double click → permanent tab
-    onPreviewTable: () => void;    // single click → temporary tab
+    tableKind: "table" | "view";
+    onOpenTable: () => void; // double click → permanent tab
+    onPreviewTable: () => void; // single click → temporary tab
     onShowInfo: () => void;
     onExport: () => void;
     onImport: () => void;
@@ -24,6 +26,7 @@
 
   let {
     tableName,
+    tableKind,
     onOpenTable,
     onPreviewTable,
     onShowInfo,
@@ -57,30 +60,34 @@
     <Info class="w-4 h-4" /><span>Info</span>
   </Item>
   <Separator />
-  <Item class="flex items-center gap-2 cursor-pointer" onclick={onExport}>
-    <Download class="w-4 h-4" /><span>Export Table</span>
-  </Item>
-  <Item class="flex items-center gap-2 cursor-pointer" onclick={onImport}>
-    <Upload class="w-4 h-4" /><span>Import SQL</span>
-  </Item>
-  <Separator />
-  <Item
-    class="flex items-center gap-2 cursor-pointer text-destructive focus:text-destructive"
-    onclick={onDelete}
-  >
-    <Trash2 class="w-4 h-4" /><span>Delete</span>
-  </Item>
-  <Item
-    class="flex items-center gap-2 cursor-pointer text-destructive focus:text-destructive"
-    onclick={onTruncate}
-  >
-    <Eraser class="w-4 h-4" /><span>Truncate</span>
-  </Item>
+  {#if tableKind === "table"}
+    <Item class="flex items-center gap-2 cursor-pointer" onclick={onExport}>
+      <Download class="w-4 h-4" /><span>Export Table</span>
+    </Item>
+    <Item class="flex items-center gap-2 cursor-pointer" onclick={onImport}>
+      <Upload class="w-4 h-4" /><span>Import SQL</span>
+    </Item>
+    <Separator />
+    <Item
+      class="flex items-center gap-2 cursor-pointer text-destructive focus:text-destructive"
+      onclick={onDelete}
+    >
+      <Trash2 class="w-4 h-4" /><span>Delete All Rows</span>
+    </Item>
+    <Item
+      class="flex items-center gap-2 cursor-pointer text-destructive focus:text-destructive"
+      onclick={onTruncate}
+    >
+      <Eraser class="w-4 h-4" /><span>Truncate</span>
+    </Item>
+  {/if}
   <Item
     class="flex items-center gap-2 cursor-pointer text-destructive focus:text-destructive"
     onclick={onDrop}
   >
-    <Trash2 class="w-4 h-4" /><span>Drop Table</span>
+    <Trash2 class="w-4 h-4" /><span
+      >{tableKind === "view" ? "Drop View" : "Drop Table"}</span
+    >
   </Item>
 {/snippet}
 
@@ -91,7 +98,11 @@
         class="flex-1 min-w-0 flex items-center gap-2 px-2 py-1 rounded text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors text-left"
         onclick={handleClick}
       >
-        <Table class="w-3 h-3 shrink-0" />
+        {#if tableKind === "view"}
+          <Eye class="w-3 h-3 shrink-0" />
+        {:else}
+          <Table class="w-3 h-3 shrink-0" />
+        {/if}
         <span class="truncate">{tableName}</span>
       </button>
       <!-- Three-dot dropdown -->
