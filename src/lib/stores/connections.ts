@@ -335,6 +335,20 @@ export function closeTab(tabId: string) {
   }
 }
 
+export function closeTabsByConnection(connectionId: string) {
+  let currentActiveId: string | null = null;
+  activeTabId.subscribe((id) => { currentActiveId = id; })();
+
+  queryTabs.update((tabs) => {
+    const remaining = tabs.filter((t) => t.connectionId !== connectionId);
+    // If active tab was removed, switch to last remaining or null
+    if (currentActiveId && !remaining.find((t) => t.id === currentActiveId)) {
+      activeTabId.set(remaining.length > 0 ? remaining[remaining.length - 1].id : null);
+    }
+    return remaining;
+  });
+}
+
 export function updateTab(tabId: string, patch: Partial<QueryTab>) {
   queryTabs.update((tabs) =>
     tabs.map((t) => (t.id === tabId ? { ...t, ...patch } : t))

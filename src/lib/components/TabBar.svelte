@@ -60,6 +60,7 @@
 
 <div
   class="flex items-stretch border-b border-border bg-background shrink-0 overflow-x-auto overflow-y-hidden scrollbar-hide"
+  onwheel={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).scrollLeft += e.deltaY || e.deltaX; }}
 >
   {#each $queryTabs as tab}
     {@const conn = $connections.find((c) => c.id === tab.connectionId)}

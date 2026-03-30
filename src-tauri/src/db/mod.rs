@@ -286,6 +286,45 @@ impl DbPool {
         }
     }
 
+    pub async fn create_database(&self, db_name: &str) -> Result<(), sqlx::Error> {
+        // Validate name to prevent SQL injection (only allow alphanumeric, underscore, hyphen)
+        if !db_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+            return Err(sqlx::Error::Protocol("Invalid database name".into()));
+        }
+        let sql = match self {
+            DbPool::Postgres(_) => format!("CREATE DATABASE \"{}\"", db_name),
+            DbPool::Mysql(_) => format!("CREATE DATABASE `{}`", db_name),
+            DbPool::Sqlite(_) => return Ok(()), // SQLite creates on connect
+        };
+        self.run_query(&sql).await?;
+        Ok(())
+    }
+
+    pub async fn list_databases(&self) -> Result<Vec<String>, sqlx::Error> {
+        match self {
+            DbPool::Postgres(pool) => {
+                let rows = sqlx::query(
+                    "SELECT datname FROM pg_database \
+                     WHERE datistemplate = false ORDER BY datname",
+                )
+                .fetch_all(pool)
+                .await?;
+                Ok(rows
+                    .iter()
+                    .map(|r| r.try_get::<String, _>(0).unwrap_or_default())
+                    .collect())
+            }
+            DbPool::Mysql(pool) => {
+                let rows = sqlx::query("SHOW DATABASES").fetch_all(pool).await?;
+                Ok(rows
+                    .iter()
+                    .map(|r| r.try_get::<String, _>(0).unwrap_or_default())
+                    .collect())
+            }
+            DbPool::Sqlite(_) => Ok(vec![]),
+        }
+    }
+
     pub async fn get_table_definition(&self, table_name: &str) -> Result<String, sqlx::Error> {
         match self {
             DbPool::Postgres(pool) => {

@@ -12,12 +12,15 @@
     addTab,
     openTableTab,
     reconnectConnection,
+    updateConnection,
+    closeTabsByConnection,
   } from "$lib/stores/connections";
   import type { Connection } from "$lib/types";
   import ConnectionItem from "./ConnectionItem.svelte";
   import TableActionDialog from "./TableActionDialog.svelte";
   import ImportSqlDialog from "./ImportSqlDialog.svelte";
   import TableInfoDialog from "./TableInfoDialog.svelte";
+  import ChangeDatabaseDialog from "./ChangeDatabaseDialog.svelte";
 
   let {
     onEditConnection,
@@ -137,6 +140,28 @@
     if (tableInfoDefinition) {
       await navigator.clipboard.writeText(tableInfoDefinition);
       toast.success("Copied");
+    }
+  }
+
+  // Change database dialog state
+  let changeDatabaseDialogOpen = $state(false);
+  let changeDatabaseConnection = $state<Connection | null>(null);
+
+  function openChangeDatabase(conn: Connection) {
+    changeDatabaseConnection = conn;
+    changeDatabaseDialogOpen = true;
+  }
+
+  async function handleChangeDatabase(database: string) {
+    if (!changeDatabaseConnection) return;
+    const updated = { ...changeDatabaseConnection, database, name: `${changeDatabaseConnection.driver}/${database}` };
+    try {
+      await invoke("add_connection", { connection: updated });
+      closeTabsByConnection(updated.id);
+      updateConnection(updated);
+      refreshTables(updated.id);
+    } catch (e) {
+      toast.error("Failed to change database", { description: String(e) });
     }
   }
 
@@ -348,6 +373,7 @@
         onRename={() => onRenameConnection(conn)}
         onExport={() => exportDatabase(conn)}
         onImport={() => importSql(conn.id)}
+        onChangeDatabase={() => openChangeDatabase(conn)}
         onDelete={() => onDeleteConnection(conn)}
         onOpenTable={(table) =>
           openTableTab(conn.id, table, `SELECT * FROM ${table} LIMIT 100;`)}
@@ -372,6 +398,13 @@
       </button>
     {/if}
   </ScrollArea>
+
+  <!-- Change Database Dialog -->
+  <ChangeDatabaseDialog
+    bind:open={changeDatabaseDialogOpen}
+    connection={changeDatabaseConnection}
+    onSelect={handleChangeDatabase}
+  />
 
   <!-- Table Action Confirmation Dialog -->
   <TableActionDialog

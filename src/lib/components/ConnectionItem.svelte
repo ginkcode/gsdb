@@ -11,6 +11,7 @@
     ChevronDown,
     ChevronRight,
     Loader,
+    Database,
   } from "@lucide/svelte";
   import type { Connection } from "$lib/types";
   import TableItem from "./TableItem.svelte";
@@ -48,6 +49,7 @@
     onRename: () => void;
     onExport: () => void;
     onImport: () => void;
+    onChangeDatabase: () => void;
     onDelete: () => void;
     onOpenTable: (tableName: string) => void;
     onShowTableInfo: (tableName: string) => void;
@@ -73,6 +75,7 @@
     onRename,
     onExport,
     onImport,
+    onChangeDatabase,
     onDelete,
     onOpenTable,
     onShowTableInfo,
@@ -129,6 +132,11 @@
     <span>Rename</span>
   </Item>
   <Separator />
+  {#if connection.driver !== "sqlite"}
+    <Item class="flex items-center gap-2 cursor-pointer" onclick={onChangeDatabase}>
+      <Database class="w-4 h-4" /><span>Change Database</span>
+    </Item>
+  {/if}
   <Item class="flex items-center gap-2 cursor-pointer" onclick={onExport}>
     <Download class="w-4 h-4" /><span>Export Database</span>
   </Item>
@@ -140,7 +148,7 @@
     class="flex items-center gap-2 cursor-pointer text-destructive focus:text-destructive"
     onclick={onDelete}
   >
-    <Trash2 class="w-4 h-4" /><span>Delete</span>
+    <Trash2 class="w-4 h-4" /><span>Delete Connection</span>
   </Item>
 {/snippet}
 

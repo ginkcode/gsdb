@@ -103,6 +103,39 @@ pub async fn list_tables(
 }
 
 #[tauri::command]
+pub async fn list_databases(
+    connection_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let pool = {
+        let pools = state.pools.lock().await;
+        pools
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+            .clone()
+    };
+
+    pool.list_databases().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn create_database(
+    connection_id: String,
+    db_name: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let pool = {
+        let pools = state.pools.lock().await;
+        pools
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+            .clone()
+    };
+
+    pool.create_database(&db_name).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn get_system_theme() -> String {
     match dark_light::detect() {
         Ok(dark_light::Mode::Dark) => "dark".to_string(),

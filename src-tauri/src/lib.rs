@@ -2,8 +2,9 @@ mod commands;
 mod db;
 
 use commands::{
-    add_connection, export_database, export_table, get_system_theme, get_table_definition,
-    import_sql, list_tables, read_file_preview, reconnect_connection, run_query, AppState,
+    add_connection, create_database, export_database, export_table, get_system_theme,
+    get_table_definition, import_sql, list_databases, list_tables, read_file_preview,
+    reconnect_connection, run_query, AppState,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -26,6 +27,8 @@ pub fn run() {
             export_table,
             export_database,
             import_sql,
+            list_databases,
+            create_database,
             read_file_preview,
         ])
         .run(tauri::generate_context!())
