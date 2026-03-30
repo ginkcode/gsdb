@@ -29,7 +29,7 @@ help:
 icons:
 	@echo "Generating icons..."
 	@# Generate macOS icns from Apple Icon Composer PNG
-	npx tauri icon src-tauri/icons/mac-icon-macOS-Default-1024x1024@1x.png -o /tmp/gsdb-mac-icons
+	npx tauri icon src-tauri/icons/Icon-macOS-Default-1024x1024@1x.png -o /tmp/gsdb-mac-icons
 	@# Generate Linux/Windows icons from gsdb.svg (transparent background)
 	npx tauri icon src-tauri/icons/gsdb.svg
 	@# Restore the macOS-specific icns
