@@ -40,7 +40,6 @@
 
   const DOUBLE_CLICK_MS = 300;
   let lastMouseDownTime = 0;
-  let pendingDragTimer: ReturnType<typeof setTimeout> | undefined;
 
   function startDrag(e: MouseEvent) {
     if (e.button !== 0 || (e.target as Element).closest("button")) return;
@@ -49,7 +48,6 @@
 
     if (now - lastMouseDownTime < DOUBLE_CLICK_MS) {
       lastMouseDownTime = 0;
-      clearTimeout(pendingDragTimer);
       maximize();
       return;
     }
@@ -57,7 +55,6 @@
     lastMouseDownTime = now;
 
     const cleanup = () => {
-      clearTimeout(pendingDragTimer);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -71,11 +68,6 @@
 
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-
-    pendingDragTimer = setTimeout(() => {
-      cleanup();
-      appWindow.startDragging();
-    }, 150);
   }
 </script>
 
