@@ -167,7 +167,7 @@
       </table>
     </ScrollArea>
     <div
-      class="flex items-center justify-between px-3 py-1.5 text-xs text-muted-foreground border-t border-border shrink-0"
+      class="flex items-center justify-between px-3 h-8 text-xs text-muted-foreground border-t border-border shrink-0"
     >
       <span
         >{result.rows.length} {result.rows.length === 1 ? "row" : "rows"}</span

@@ -493,7 +493,7 @@
   />
 
   {#if appVersion}
-    <div class="px-4 py-2 border-t border-border shrink-0 flex items-center justify-between gap-2">
+    <div class="px-3 h-8 border-t border-border shrink-0 flex items-center justify-between gap-2">
       <p class="text-[10px] text-muted-foreground">v{appVersion}</p>
       {#if updateAvailable}
         <button
