@@ -6,18 +6,26 @@ use commands::{
     get_table_definition, import_sql, list_databases, list_tables, read_file_preview,
     reconnect_connection, run_query, AppState,
 };
-use tauri::{window::Color, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .setup(|app| {
-            // On macOS, the WKWebView backing layer defaults to white even when
-            // transparent: true is set in tauri.conf.json. Explicitly clear it.
+        .setup(|_app| {
+            // On macOS, transparent: true clears the WKWebView background but the
+            // NSWindow background defaults to white. Set it to clear explicitly so
+            // the CSS rounded corners show the desktop instead of white in the corners.
             #[cfg(target_os = "macos")]
             {
-                let window = app.get_webview_window("main").unwrap();
-                window.set_background_color(Some(Color(0, 0, 0, 0)))?;
+                use objc::{class, msg_send, sel, sel_impl};
+                use tauri::{Manager, WebviewWindowExtMacOS};
+                let window = _app.get_webview_window("main").unwrap();
+                let ns_win = window.ns_window() as *mut objc::runtime::Object;
+                unsafe {
+                    let clear: *mut objc::runtime::Object =
+                        msg_send![class!(NSColor), clearColor];
+                    let _: () = msg_send![ns_win, setBackgroundColor: clear];
+                    let _: () = msg_send![ns_win, setOpaque: false as objc::runtime::BOOL];
+                }
             }
             Ok(())
         })
