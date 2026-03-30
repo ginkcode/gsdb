@@ -12,7 +12,7 @@
     "tauri": "tauri",
     "tauri:build": "NO_STRIP=1 tauri build"
   },
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "dependencies": {
     "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/theme-one-dark": "^6.1.3",
