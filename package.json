@@ -1,6 +1,6 @@
 {
   "name": "gsdb",
-  "version": "0.2.45",
+  "version": "0.2.46",
   "description": "A database management tool",
   "type": "module",
   "scripts": {

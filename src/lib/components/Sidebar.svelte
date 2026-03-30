@@ -427,6 +427,7 @@
     bind:open={tableActionDialogOpen}
     actionType={tableActionType}
     tableName={tableActionTableName}
+    tableKind={tableActionTableKind}
     sql={tableActionSql}
     loading={tableActionLoading}
     onConfirm={confirmTableAction}

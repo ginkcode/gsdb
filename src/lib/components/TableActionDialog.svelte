@@ -9,6 +9,7 @@
     open: boolean;
     actionType: TableActionType;
     tableName: string;
+    tableKind: "table" | "view";
     sql: string;
     loading: boolean;
     onConfirm: () => void;
@@ -19,16 +20,14 @@
     open = $bindable(false),
     actionType,
     tableName,
+    tableKind,
     sql,
     loading,
     onConfirm,
     onCancel,
   }: Props = $props();
 
-  const actionMeta: Record<
-    TableActionType,
-    { title: string; description: string; confirm: string }
-  > = {
+  const actionMeta = $derived({
     delete: {
       title: "Delete all rows",
       description:
@@ -42,11 +41,14 @@
       confirm: "Truncate",
     },
     drop: {
-      title: "Drop table",
-      description: "The table and all its data will be permanently deleted.",
-      confirm: "Drop Table",
+      title: tableKind === "view" ? "Drop view" : "Drop table",
+      description:
+        tableKind === "view"
+          ? "The view will be permanently deleted."
+          : "The table and all its data will be permanently deleted.",
+      confirm: tableKind === "view" ? "Drop View" : "Drop Table",
     },
-  };
+  });
 </script>
 
 <Dialog.Root bind:open>
