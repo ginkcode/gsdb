@@ -110,7 +110,8 @@ impl SshTunnel {
             .local_addr()
             .map_err(|e| format!("Failed to get local address: {}", e))?
             .port();
-        listener.set_nonblocking(true)
+        listener
+            .set_nonblocking(true)
             .map_err(|e| format!("Failed to set non-blocking: {}", e))?;
 
         let target_host = target_host.to_string();
@@ -135,7 +136,8 @@ impl SshTunnel {
                             // channel_direct_tcpip is a round-trip with the server so it
                             // must run in blocking mode; non-blocking returns EAGAIN silently
                             session.set_blocking(true);
-                            let ch_result = session.channel_direct_tcpip(&target_host, target_port, None);
+                            let ch_result =
+                                session.channel_direct_tcpip(&target_host, target_port, None);
                             session.set_blocking(false);
                             if let Ok(ch) = ch_result {
                                 pipes.push((stream, ch));
@@ -155,7 +157,9 @@ impl SshTunnel {
                     // channel → local stream
                     match ch.read(&mut buf) {
                         Ok(0) => {} // libssh2 non-blocking returns 0 when no data, not WouldBlock
-                        Ok(n) => { stream.write_all(&buf[..n]).ok(); }
+                        Ok(n) => {
+                            stream.write_all(&buf[..n]).ok();
+                        }
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                         Err(_) => done = true,
                     }
@@ -163,7 +167,9 @@ impl SshTunnel {
                     // local stream → channel
                     match stream.read(&mut buf) {
                         Ok(0) => done = true, // TCP peer closed connection
-                        Ok(n) => { ch.write_all(&buf[..n]).ok(); }
+                        Ok(n) => {
+                            ch.write_all(&buf[..n]).ok();
+                        }
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                         Err(_) => done = true,
                     }
@@ -181,7 +187,11 @@ impl SshTunnel {
                     let _ = ch.close();
                 }
 
-                std::thread::sleep(std::time::Duration::from_millis(if pipes.is_empty() { 5 } else { 1 }));
+                std::thread::sleep(std::time::Duration::from_millis(if pipes.is_empty() {
+                    5
+                } else {
+                    1
+                }));
             }
         });
 
@@ -365,7 +375,10 @@ impl DbPool {
 
     pub async fn create_database(&self, db_name: &str) -> Result<(), sqlx::Error> {
         // Validate name to prevent SQL injection (only allow alphanumeric, underscore, hyphen)
-        if !db_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        if !db_name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
             return Err(sqlx::Error::Protocol("Invalid database name".into()));
         }
         let sql = match self {
@@ -448,15 +461,13 @@ impl DbPool {
                                 udt_name.clone()
                             }
                         }
-                        "numeric" => {
-                            match (num_precision, num_scale) {
-                                (Some(prec), Some(scale)) if scale > 0 => {
-                                    format!("{}({}, {})", udt_name, prec, scale)
-                                }
-                                (Some(prec), _) => format!("{}({})", udt_name, prec),
-                                _ => udt_name.clone(),
+                        "numeric" => match (num_precision, num_scale) {
+                            (Some(prec), Some(scale)) if scale > 0 => {
+                                format!("{}({}, {})", udt_name, prec, scale)
                             }
-                        }
+                            (Some(prec), _) => format!("{}({})", udt_name, prec),
+                            _ => udt_name.clone(),
+                        },
                         _ => udt_name.clone(),
                     };
 
@@ -662,8 +673,12 @@ fn pg_value(row: &sqlx::postgres::PgRow, idx: usize) -> Value {
         }
     }
     // oid and oid-based types — sqlx represents these as Oid(u32), not u32 or String
-    if matches!(type_name.as_str(), "oid" | "xid" | "cid" | "regproc" | "regclass" | "regtype") {
-        if let Ok(sqlx::postgres::types::Oid(v)) = row.try_get::<sqlx::postgres::types::Oid, _>(idx) {
+    if matches!(
+        type_name.as_str(),
+        "oid" | "xid" | "cid" | "regproc" | "regclass" | "regtype"
+    ) {
+        if let Ok(sqlx::postgres::types::Oid(v)) = row.try_get::<sqlx::postgres::types::Oid, _>(idx)
+        {
             return Value::Number(u64::from(v).into());
         }
     }
@@ -813,9 +828,9 @@ async fn sqlite_query(pool: &sqlx::SqlitePool, sql: &str) -> Result<QueryResult,
 
 fn sqlite_value(row: &sqlx::sqlite::SqliteRow, idx: usize) -> Value {
     // SQLite is dynamically typed — try in priority order
-    if let Ok(v) = row.try_get::<bool, _>(idx) {
-        return Value::Bool(v);
-    }
+    // IMPORTANT: Check integers BEFORE booleans because sqlx's try_get::<bool>
+    // succeeds for integer values (0 = false, non-zero = true), which would
+    // incorrectly convert INT columns to booleans.
     if let Ok(v) = row.try_get::<i64, _>(idx) {
         return Value::Number(v.into());
     }
@@ -823,6 +838,9 @@ fn sqlite_value(row: &sqlx::sqlite::SqliteRow, idx: usize) -> Value {
         if let Some(n) = serde_json::Number::from_f64(v) {
             return Value::Number(n);
         }
+    }
+    if let Ok(v) = row.try_get::<bool, _>(idx) {
+        return Value::Bool(v);
     }
     if let Ok(v) = row.try_get::<String, _>(idx) {
         return Value::String(v);
@@ -984,7 +1002,11 @@ impl DbPool {
         Ok(out)
     }
 
-    pub async fn import_sql(&self, sql: &str, disable_fk_checks: bool) -> Result<usize, sqlx::Error> {
+    pub async fn import_sql(
+        &self,
+        sql: &str,
+        disable_fk_checks: bool,
+    ) -> Result<usize, sqlx::Error> {
         if disable_fk_checks {
             let stmt = match self {
                 DbPool::Postgres(_) => "SET session_replication_role = 'replica'",
