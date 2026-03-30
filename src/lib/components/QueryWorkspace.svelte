@@ -9,6 +9,7 @@
     activeTabId,
     activeTab,
     updateTab,
+    activeConnection,
   } from "$lib/stores/connections";
   import type { QueryResult } from "$lib/types";
 
@@ -41,6 +42,7 @@
           bind:value={tab.sql}
           bind:runRef={editorRun}
           bind:formatRef={editorFormat}
+          dialect={$activeConnection?.driver === "mysql" ? "mysql" : $activeConnection?.driver === "postgres" ? "postgresql" : "sql"}
           onRun={(sql) => runQuery(tab.id, sql)}
         />
         <div

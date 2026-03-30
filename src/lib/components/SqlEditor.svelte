@@ -6,14 +6,17 @@
   import { oneDark } from "@codemirror/theme-one-dark";
   import { Prec, Compartment } from "@codemirror/state";
   import { format as formatSQL } from "sql-formatter";
+  import { toast } from "svelte-sonner";
 
   let {
     value = $bindable(""),
+    dialect = "sql",
     onRun,
     runRef = $bindable(),
     formatRef = $bindable(),
   }: {
     value?: string;
+    dialect?: string;
     onRun: (sql: string) => void;
     runRef?: () => void;
     formatRef?: () => void;
@@ -121,17 +124,16 @@
   function formatAtCursor() {
     const text = view.state.doc.toString();
     const bounds = semicolonBoundaries(text);
+    const formatOptions = {
+      language: dialect,
+      tabWidth: 2,
+      keywordCase: "upper" as const,
+      indentStyle: "standard" as const,
+    };
 
     try {
       if (bounds.length === 0) {
-        // No semicolons - format entire text as single statement
-        const formatted = formatSQL(text.trim(), {
-          language: "sql",
-          tabWidth: 2,
-          keywordCase: "upper",
-          indentStyle: "standard",
-        });
-
+        const formatted = formatSQL(text.trim(), formatOptions);
         view.dispatch({
           changes: { from: 0, to: text.length, insert: formatted },
         });
@@ -139,32 +141,20 @@
         return;
       }
 
-      // Split text into statements at semicolons
       const statements: string[] = [];
       let lastEnd = 0;
 
       for (const semicolonPos of bounds) {
         const stmt = text.slice(lastEnd, semicolonPos).trim();
-        if (stmt) {
-          statements.push(stmt);
-        }
+        if (stmt) statements.push(stmt);
         lastEnd = semicolonPos + 1;
       }
 
-      // Get any remaining text after the last semicolon
       const remaining = text.slice(lastEnd).trim();
-      if (remaining) {
-        statements.push(remaining);
-      }
+      if (remaining) statements.push(remaining);
 
-      // Format each statement and join with semicolons and newlines
       const formattedStatements = statements.map((stmt) =>
-        formatSQL(stmt, {
-          language: "sql",
-          tabWidth: 2,
-          keywordCase: "upper",
-          indentStyle: "standard",
-        }),
+        formatSQL(stmt, formatOptions),
       );
 
       const finalText =
@@ -175,7 +165,9 @@
       });
       value = view.state.doc.toString();
     } catch (err) {
-      console.error("Failed to format SQL:", err);
+      toast.error("Could not format SQL", {
+        description: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

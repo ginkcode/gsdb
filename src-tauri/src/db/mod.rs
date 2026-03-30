@@ -267,10 +267,21 @@ impl DbPool {
                     .collect())
             }
             DbPool::Mysql(pool) => {
-                let rows = sqlx::query("SHOW TABLES").fetch_all(pool).await?;
+                let rows = sqlx::query(
+                    "SELECT TABLE_NAME FROM information_schema.TABLES \
+                     WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME",
+                )
+                .fetch_all(pool)
+                .await?;
                 Ok(rows
                     .iter()
-                    .map(|r| r.try_get::<String, _>(0).unwrap_or_default())
+                    .map(|r| {
+                        r.try_get::<String, _>(0).unwrap_or_else(|_| {
+                            r.try_get::<Vec<u8>, _>(0)
+                                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                                .unwrap_or_default()
+                        })
+                    })
                     .collect())
             }
             DbPool::Sqlite(pool) => {
@@ -315,10 +326,20 @@ impl DbPool {
                     .collect())
             }
             DbPool::Mysql(pool) => {
-                let rows = sqlx::query("SHOW DATABASES").fetch_all(pool).await?;
+                let rows = sqlx::query(
+                    "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME",
+                )
+                .fetch_all(pool)
+                .await?;
                 Ok(rows
                     .iter()
-                    .map(|r| r.try_get::<String, _>(0).unwrap_or_default())
+                    .map(|r| {
+                        r.try_get::<String, _>(0).unwrap_or_else(|_| {
+                            r.try_get::<Vec<u8>, _>(0)
+                                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                                .unwrap_or_default()
+                        })
+                    })
                     .collect())
             }
             DbPool::Sqlite(_) => Ok(vec![]),
@@ -624,10 +645,11 @@ async fn mysql_query(pool: &sqlx::MySqlPool, sql: &str) -> Result<QueryResult, s
 fn mysql_value(row: &sqlx::mysql::MySqlRow, idx: usize) -> Value {
     let type_name = row.columns()[idx].type_info().name().to_lowercase();
 
-    if matches!(
-        type_name.as_str(),
-        "tinyint" | "smallint" | "mediumint" | "int" | "bigint"
-    ) {
+    if type_name.contains("int") {
+        // Try unsigned first for "int unsigned", "bigint unsigned", etc.
+        if let Ok(v) = row.try_get::<u64, _>(idx) {
+            return Value::Number(v.into());
+        }
         if let Ok(v) = row.try_get::<i64, _>(idx) {
             return Value::Number(v.into());
         }
@@ -669,6 +691,9 @@ fn mysql_value(row: &sqlx::mysql::MySqlRow, idx: usize) -> Value {
     }
     if let Ok(v) = row.try_get::<String, _>(idx) {
         return Value::String(v);
+    }
+    if let Ok(bytes) = row.try_get::<Vec<u8>, _>(idx) {
+        return Value::String(String::from_utf8_lossy(&bytes).into_owned());
     }
 
     Value::Null
