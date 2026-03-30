@@ -1,4 +1,4 @@
-.PHONY: help build release clean version tag push-tag push aur aur-deploy
+.PHONY: help build release clean version tag push-tag push aur aur-deploy icons
 
 # Current version from package.json
 VERSION := $(shell node -p "require('./package.json').version")
@@ -12,7 +12,8 @@ help:
 	@echo "GSDB Makefile"
 	@echo ""
 	@echo "Usage:"
-	@echo "  make build          - Build the application (binary, deb, rpm, appimage)"
+	@echo "  make icons          - Regenerate all app icons from SVG sources
+  make build          - Build the application (binary, deb, rpm, appimage)"
 	@echo "  make release        - Push commits, tag, and create a GitHub release with AppImage"
 	@echo "  make aur-deploy     - Copy AUR files to local gsdb/gsdb-bin repos"
 	@echo "  make version        - Show current version"
@@ -24,6 +25,19 @@ help:
 	@echo "  make set-version V=x.x.x  - Set a new version"
 	@echo ""
 	@echo "Current version: $(VERSION)"
+
+icons:
+	@echo "Generating icons..."
+	@# Generate macOS icns from gsdb-mac.svg (white squircle background)
+	npx tauri icon src-tauri/icons/gsdb-mac.svg -o /tmp/gsdb-mac-icons
+	@# Generate Linux/Windows icons from gsdb.svg (transparent background)
+	npx tauri icon src-tauri/icons/gsdb.svg
+	@# Restore the macOS-specific icns
+	cp /tmp/gsdb-mac-icons/icon.icns src-tauri/icons/icon.icns
+	@echo "Icons generated."
+	@echo "  macOS:   src-tauri/icons/icon.icns  (from gsdb-mac.svg)"
+	@echo "  Windows: src-tauri/icons/icon.ico   (from gsdb.svg)"
+	@echo "  Linux:   src-tauri/icons/*.png      (from gsdb.svg)"
 
 version:
 	@echo "Current version: $(VERSION)"
