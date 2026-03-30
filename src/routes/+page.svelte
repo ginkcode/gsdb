@@ -15,6 +15,7 @@
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import { toast } from "svelte-sonner";
+  import { platform } from "$lib/stores/platform";
   import {
     connections,
     activeConnectionId,
@@ -41,6 +42,7 @@
   let selectedRow = $state<Record<string, unknown> | null>(null);
   let showDetailPanel = $state(true);
   let isMaximized = $state(false);
+  let currentPlatform = $state<"windows" | "macos" | "linux" | "unknown">("unknown");
 
   // Load saved connections on mount
   onMount((): (() => void) => {
@@ -54,6 +56,11 @@
         isMaximized = await appWindow.isMaximized();
       });
     })();
+
+    // Subscribe to platform changes
+    const unsubPlatform = platform.subscribe((p) => {
+      currentPlatform = p;
+    });
 
     // Handle keyboard shortcuts for closing tabs
     function handleKeyDown(e: KeyboardEvent) {
@@ -71,6 +78,7 @@
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       unlisten?.();
+      unsubPlatform();
     };
   });
 
@@ -160,7 +168,9 @@
 <div
   class="h-screen bg-background text-foreground overflow-hidden font-sans antialiased flex flex-col {isMaximized
     ? 'rounded-none'
-    : 'rounded-md border border-border'}"
+    : currentPlatform === 'windows'
+      ? 'rounded-md border border-border'
+      : 'rounded-xl border border-border'}"
 >
   <!-- Custom Title Bar -->
   <TitleBar />
