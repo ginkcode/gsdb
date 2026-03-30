@@ -12,7 +12,7 @@
     drop shadow renders cleanly and the icon looks proportionally sized in the Dock.
     Squircle: x=40, y=40, size=944x944, corner radius ~22.5% of 944 ≈ 212px
   -->
-  <rect x="40" y="40" width="944" height="944" rx="212" ry="212" fill="white"/>
+  <rect x="40" y="40" width="944" height="944" rx="212" ry="212" fill="white" stroke="#d1d5db" stroke-width="3"/>
 
   <!--
     Original icon viewBox: 122.88 x 122.88

@@ -28,14 +28,14 @@ help:
 
 icons:
 	@echo "Generating icons..."
-	@# Generate macOS icns from gsdb-mac.svg (white squircle background)
-	npx tauri icon src-tauri/icons/gsdb-mac.svg -o /tmp/gsdb-mac-icons
+	@# Generate macOS icns from Apple Icon Composer PNG
+	npx tauri icon src-tauri/icons/mac-icon-macOS-Default-1024x1024@1x.png -o /tmp/gsdb-mac-icons
 	@# Generate Linux/Windows icons from gsdb.svg (transparent background)
 	npx tauri icon src-tauri/icons/gsdb.svg
 	@# Restore the macOS-specific icns
 	cp /tmp/gsdb-mac-icons/icon.icns src-tauri/icons/icon.icns
 	@echo "Icons generated."
-	@echo "  macOS:   src-tauri/icons/icon.icns  (from gsdb-mac.svg)"
+	@echo "  macOS:   src-tauri/icons/icon.icns  (from mac-icon-macOS-Default-1024x1024@1x.png)"
 	@echo "  Windows: src-tauri/icons/icon.ico   (from gsdb.svg)"
 	@echo "  Linux:   src-tauri/icons/*.png      (from gsdb.svg)"
 
