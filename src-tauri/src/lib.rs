@@ -6,7 +6,7 @@ use commands::{
     get_table_definition, import_sql, list_databases, list_tables, read_file_preview,
     reconnect_connection, run_query, AppState,
 };
-use tauri::Manager;
+use tauri::{window::Color, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,7 +17,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 let window = app.get_webview_window("main").unwrap();
-                window.set_background_color(Some(tauri::Color(0, 0, 0, 0)))?;
+                window.set_background_color(Some(Color(0, 0, 0, 0)))?;
             }
             Ok(())
         })
