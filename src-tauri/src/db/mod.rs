@@ -675,6 +675,12 @@ fn pg_value(row: &sqlx::postgres::PgRow, idx: usize) -> Value {
         }
     }
     if type_name.starts_with("time") {
+        // timetz (time with time zone) needs PgTimeTz, not NaiveTime
+        if type_name == "timetz" {
+            if let Ok(v) = row.try_get::<sqlx::postgres::types::PgTimeTz, _>(idx) {
+                return Value::String(format!("{}{}", v.time, v.offset));
+            }
+        }
         if let Ok(v) = row.try_get::<chrono::NaiveTime, _>(idx) {
             return Value::String(v.to_string());
         }
