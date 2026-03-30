@@ -418,3 +418,9 @@ export function updateTab(tabId: string, patch: Partial<QueryTab>) {
     tabs.map((t) => (t.id === tabId ? { ...t, ...patch } : t))
   );
 }
+
+export function makeTabPermanent(tabId: string) {
+  queryTabs.update((tabs) =>
+    tabs.map((t) => (t.id === tabId ? { ...t, temporary: false } : t))
+  );
+}

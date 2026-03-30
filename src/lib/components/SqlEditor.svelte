@@ -5,7 +5,7 @@
   import { sql } from "@codemirror/lang-sql";
   import { oneDark } from "@codemirror/theme-one-dark";
   import { Prec, Compartment } from "@codemirror/state";
-  import { format as formatSQL } from "sql-formatter";
+  import { format as formatSQL, type SqlLanguage } from "sql-formatter";
   import { toast } from "svelte-sonner";
 
   let {
@@ -16,7 +16,7 @@
     formatRef = $bindable(),
   }: {
     value?: string;
-    dialect?: string;
+    dialect?: SqlLanguage;
     onRun: (sql: string) => void;
     runRef?: () => void;
     formatRef?: () => void;

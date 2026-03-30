@@ -30,6 +30,7 @@
     removeConnection,
     renameConnection,
     updateConnection,
+    makeTabPermanent,
   } from "$lib/stores/connections";
   import type { Connection, QueryResult } from "$lib/types";
 
@@ -42,7 +43,9 @@
   let selectedRow = $state<Record<string, unknown> | null>(null);
   let showDetailPanel = $state(true);
   let isMaximized = $state(false);
-  let currentPlatform = $state<"windows" | "macos" | "linux" | "unknown">("unknown");
+  let currentPlatform = $state<"windows" | "macos" | "linux" | "unknown">(
+    "unknown",
+  );
 
   // Load saved connections on mount
   onMount((): (() => void) => {
@@ -103,6 +106,12 @@
   async function runQuery(tabId: string, sql: string) {
     const tab = $queryTabs.find((t) => t.id === tabId);
     if (!tab) return;
+
+    // Make temporary tabs permanent when running a query
+    if (tab.temporary) {
+      makeTabPermanent(tabId);
+    }
+
     updateTab(tabId, { isLoading: true, result: undefined });
     try {
       const result: QueryResult = await invoke("run_query", {

@@ -42,7 +42,11 @@
           bind:value={tab.sql}
           bind:runRef={editorRun}
           bind:formatRef={editorFormat}
-          dialect={$activeConnection?.driver === "mysql" ? "mysql" : $activeConnection?.driver === "postgres" ? "postgresql" : "sql"}
+          dialect={$activeConnection?.driver === "mysql"
+            ? "mysql"
+            : $activeConnection?.driver === "postgres"
+              ? "postgresql"
+              : "sql"}
           onRun={(sql) => runQuery(tab.id, sql)}
         />
         <div

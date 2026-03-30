@@ -5,6 +5,7 @@
     activeTabId,
     closeTab,
     connections,
+    makeTabPermanent,
   } from "$lib/stores/connections";
   import * as ContextMenu from "$lib/components/ui/context-menu";
 
@@ -60,7 +61,10 @@
 
 <div
   class="flex items-stretch border-b border-border bg-background shrink-0 overflow-x-auto overflow-y-hidden scrollbar-hide"
-  onwheel={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).scrollLeft += e.deltaY || e.deltaX; }}
+  onwheel={(e) => {
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).scrollLeft += e.deltaY || e.deltaX;
+  }}
 >
   {#each $queryTabs as tab}
     {@const conn = $connections.find((c) => c.id === tab.connectionId)}
@@ -76,6 +80,7 @@
             ? 'bg-muted text-foreground border-b-2 border-b-primary -mb-px'
             : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}"
           onclick={() => activeTabId.set(tab.id)}
+          ondblclick={() => makeTabPermanent(tab.id)}
           onkeydown={(e) => e.key === "Enter" && activeTabId.set(tab.id)}
         >
           {#if conn}
