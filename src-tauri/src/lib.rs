@@ -6,10 +6,21 @@ use commands::{
     get_table_definition, import_sql, list_databases, list_tables, read_file_preview,
     reconnect_connection, run_query, AppState,
 };
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            // On macOS, the WKWebView backing layer defaults to white even when
+            // transparent: true is set in tauri.conf.json. Explicitly clear it.
+            #[cfg(target_os = "macos")]
+            {
+                let window = app.get_webview_window("main").unwrap();
+                window.set_background_color(Some(tauri::Color(0, 0, 0, 0)))?;
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_keyring::init())
