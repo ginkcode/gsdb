@@ -1,280 +1,17 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use sqlx::{Column, Row, TypeInfo};
-use ssh2::Session;
-use std::collections::HashMap;
-use std::net::TcpStream;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+pub mod types;
 
-// ── Table info (table vs view) ────────────────────────────────────────────────
+mod ssh;
+mod postgres;
+mod mysql;
+mod sqlite;
+mod export;
 
-#[derive(Debug, Clone, Serialize)]
-pub struct TableInfo {
-    pub name: String,
-    pub kind: String, // "table" or "view"
-}
+pub use types::{Connection, QueryResult, TableInfo};
+pub use ssh::SshTunnel;
 
-// ── SSH Tunnel config ────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SshConfig {
-    pub host: String,
-    pub port: u16,
-    pub username: String,
-    pub password: Option<String>,
-    #[serde(rename = "privateKey")]
-    pub private_key: Option<String>,
-    #[serde(rename = "privateKeyPassphrase")]
-    pub private_key_passphrase: Option<String>,
-}
-
-// ── Connection config ────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Connection {
-    pub id: String,
-    pub name: String,
-    pub driver: String,
-    pub host: Option<String>,
-    pub port: Option<u16>,
-    pub database: String,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    #[serde(rename = "filePath")]
-    pub file_path: Option<String>,
-    pub ssh: Option<SshConfig>,
-    #[serde(rename = "sslMode")]
-    pub ssl_mode: Option<String>,
-}
-
-/// Active SSH tunnel that keeps the session alive
-pub struct SshTunnel {
-    #[allow(dead_code)]
-    session: Arc<Mutex<Option<Session>>>,
-    local_port: u16,
-}
-
-impl SshTunnel {
-    /// Create an SSH tunnel and return the local port
-    pub fn create(ssh: &SshConfig, target_host: &str, target_port: u16) -> Result<Self, String> {
-        // Connect to SSH server
-        let ssh_addr = format!("{}:{}", ssh.host, ssh.port);
-        let tcp = TcpStream::connect(&ssh_addr)
-            .map_err(|e| format!("Failed to connect to SSH server {}: {}", ssh_addr, e))?;
-        tcp.set_nonblocking(false)
-            .map_err(|e| format!("Failed to set blocking mode: {}", e))?;
-
-        let mut session =
-            Session::new().map_err(|e| format!("Failed to create SSH session: {}", e))?;
-        session.set_tcp_stream(tcp);
-        session
-            .handshake()
-            .map_err(|e| format!("SSH handshake failed: {}", e))?;
-
-        // Authenticate
-        if let Some(password) = &ssh.password {
-            session
-                .userauth_password(&ssh.username, password)
-                .map_err(|e| format!("SSH password authentication failed: {}", e))?;
-        } else if let Some(private_key) = &ssh.private_key {
-            let passphrase = ssh.private_key_passphrase.as_deref();
-            // libssh2's userauth_pubkey_memory does not support the OpenSSH private key
-            // format (-----BEGIN OPENSSH PRIVATE KEY-----). Write to a temp file so that
-            // OpenSSL reads it directly, which handles both legacy PEM and OpenSSH formats.
-            let tmp_key_path = {
-                use std::io::Write;
-                let mut tmp = tempfile::NamedTempFile::new()
-                    .map_err(|e| format!("Failed to create temp key file: {}", e))?;
-                tmp.write_all(private_key.as_bytes())
-                    .map_err(|e| format!("Failed to write temp key file: {}", e))?;
-                // Keep the file alive by persisting it; we delete it after auth.
-                tmp.into_temp_path()
-            };
-            let result = session.userauth_pubkey_file(
-                &ssh.username,
-                None,
-                tmp_key_path.as_ref(),
-                passphrase,
-            );
-            // Delete temp file immediately after use regardless of result
-            let _ = tmp_key_path.close();
-            result.map_err(|e| format!("SSH key authentication failed: {}", e))?;
-        } else {
-            // Try default SSH key from ssh-agent
-            session
-                .userauth_agent(&ssh.username)
-                .map_err(|e| format!("SSH agent authentication failed: {}", e))?;
-        }
-
-        if !session.authenticated() {
-            return Err("SSH authentication failed".to_string());
-        }
-
-        // Bind the local listener before spawning so we can return the port immediately
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| format!("Failed to bind local port: {}", e))?;
-        let local_port = listener
-            .local_addr()
-            .map_err(|e| format!("Failed to get local address: {}", e))?
-            .port();
-        listener
-            .set_nonblocking(true)
-            .map_err(|e| format!("Failed to set non-blocking: {}", e))?;
-
-        let target_host = target_host.to_string();
-
-        // The SSH session owns all channels, so everything must run on one thread.
-        // We use a non-blocking event loop that:
-        //   1. Accepts new TCP connections and opens a fresh SSH channel for each
-        //   2. Pumps data bidirectionally between each (TcpStream, Channel) pair
-        std::thread::spawn(move || {
-            use std::io::{Read, Write};
-
-            // Each entry is (local_tcp_stream, ssh_channel)
-            let mut pipes: Vec<(std::net::TcpStream, ssh2::Channel)> = Vec::new();
-            let mut buf = [0u8; 16384];
-
-            loop {
-                // Accept any new incoming connections (listener is non-blocking)
-                loop {
-                    match listener.accept() {
-                        Ok((stream, _)) => {
-                            stream.set_nonblocking(true).ok();
-                            // channel_direct_tcpip is a round-trip with the server so it
-                            // must run in blocking mode; non-blocking returns EAGAIN silently
-                            session.set_blocking(true);
-                            let ch_result =
-                                session.channel_direct_tcpip(&target_host, target_port, None);
-                            session.set_blocking(false);
-                            if let Ok(ch) = ch_result {
-                                pipes.push((stream, ch));
-                            }
-                            // If channel open failed the stream is dropped → client gets RST
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                        Err(_) => return, // listener closed or fatal error
-                    }
-                }
-
-                // Pump data for all active pipes
-                let mut to_close: Vec<usize> = Vec::new();
-                for (i, (stream, ch)) in pipes.iter_mut().enumerate() {
-                    let mut done = false;
-
-                    // channel → local stream
-                    match ch.read(&mut buf) {
-                        Ok(0) => {} // libssh2 non-blocking returns 0 when no data, not WouldBlock
-                        Ok(n) => {
-                            stream.write_all(&buf[..n]).ok();
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                        Err(_) => done = true,
-                    }
-
-                    // local stream → channel
-                    match stream.read(&mut buf) {
-                        Ok(0) => done = true, // TCP peer closed connection
-                        Ok(n) => {
-                            ch.write_all(&buf[..n]).ok();
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                        Err(_) => done = true,
-                    }
-
-                    // ch.eof() is only reliable after set_blocking(false); check last
-                    if done || ch.eof() {
-                        to_close.push(i);
-                    }
-                }
-
-                // Remove closed pipes (in reverse order to preserve indices)
-                for i in to_close.into_iter().rev() {
-                    let (_, mut ch) = pipes.remove(i);
-                    let _ = ch.send_eof();
-                    let _ = ch.close();
-                }
-
-                std::thread::sleep(std::time::Duration::from_millis(if pipes.is_empty() {
-                    5
-                } else {
-                    1
-                }));
-            }
-        });
-
-        let session_arc = Arc::new(Mutex::new(None::<Session>));
-        Ok(SshTunnel {
-            session: session_arc,
-            local_port,
-        })
-    }
-
-    pub fn local_port(&self) -> u16 {
-        self.local_port
-    }
-}
-
-impl Connection {
-    pub fn to_url(&self) -> String {
-        match self.driver.as_str() {
-            "postgres" => format!(
-                "postgres://{}:{}@{}:{}/{}?sslmode={}",
-                self.username.as_deref().unwrap_or(""),
-                self.password.as_deref().unwrap_or(""),
-                self.host.as_deref().unwrap_or("localhost"),
-                self.port.unwrap_or(5432),
-                self.database,
-                self.ssl_mode.as_deref().unwrap_or("prefer")
-            ),
-            "mysql" => format!(
-                "mysql://{}:{}@{}:{}/{}?ssl-mode={}",
-                self.username.as_deref().unwrap_or(""),
-                self.password.as_deref().unwrap_or(""),
-                self.host.as_deref().unwrap_or("localhost"),
-                self.port.unwrap_or(3306),
-                self.database,
-                self.ssl_mode.as_deref().unwrap_or("preferred")
-            ),
-            "sqlite" => format!(
-                "sqlite://{}",
-                self.file_path.as_deref().unwrap_or(&self.database)
-            ),
-            _ => String::new(),
-        }
-    }
-
-    pub fn to_url_via_tunnel(&self, local_port: u16) -> String {
-        match self.driver.as_str() {
-            "postgres" => format!(
-                "postgres://{}:{}@127.0.0.1:{}/{}?sslmode={}",
-                self.username.as_deref().unwrap_or(""),
-                self.password.as_deref().unwrap_or(""),
-                local_port,
-                self.database,
-                self.ssl_mode.as_deref().unwrap_or("prefer")
-            ),
-            "mysql" => format!(
-                "mysql://{}:{}@127.0.0.1:{}/{}?ssl-mode={}",
-                self.username.as_deref().unwrap_or(""),
-                self.password.as_deref().unwrap_or(""),
-                local_port,
-                self.database,
-                self.ssl_mode.as_deref().unwrap_or("preferred")
-            ),
-            _ => self.to_url(),
-        }
-    }
-}
-
-// ── Query result ─────────────────────────────────────────────────────────────
-
-#[derive(Debug, Serialize)]
-pub struct QueryResult {
-    pub columns: Vec<String>,
-    pub rows: Vec<HashMap<String, Value>>,
-    pub rows_affected: Option<u64>,
-}
+use postgres::pg_query;
+use mysql::mysql_query;
+use sqlite::sqlite_query;
 
 // ── Driver-specific pool enum ─────────────────────────────────────────────────
 
@@ -288,7 +25,6 @@ pub enum DbPool {
 impl DbPool {
     pub async fn connect(conn: &Connection) -> Result<Self, sqlx::Error> {
         let url = if let Some(ssh) = &conn.ssh {
-            // Establish SSH tunnel and connect through it
             let target_host = conn.host.clone().unwrap_or_else(|| "localhost".to_string());
             let target_port = conn.port.unwrap_or(match conn.driver.as_str() {
                 "postgres" => 5432,
@@ -296,10 +32,7 @@ impl DbPool {
                 _ => 0,
             });
 
-            // Clone SSH config to move into spawn_blocking
             let ssh_config = ssh.clone();
-
-            // Create SSH tunnel (this runs synchronously)
             let tunnel = tokio::task::spawn_blocking(move || {
                 SshTunnel::create(&ssh_config, &target_host, target_port)
             })
@@ -308,11 +41,7 @@ impl DbPool {
             .map_err(|e| sqlx::Error::Configuration(e.into()))?;
 
             let local_port = tunnel.local_port();
-
-            // Store the tunnel to keep it alive (it will be dropped when the pool is dropped)
-            // For now, we'll just use the local port
-            let _ = tunnel; // Keep alive
-
+            let _ = tunnel; // keep alive
             conn.to_url_via_tunnel(local_port)
         } else {
             conn.to_url()
@@ -383,10 +112,12 @@ impl DbPool {
                     .collect())
             }
             DbPool::Sqlite(pool) => {
-                let rows =
-                    sqlx::query("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name")
-                        .fetch_all(pool)
-                        .await?;
+                let rows = sqlx::query(
+                    "SELECT name, type FROM sqlite_master \
+                     WHERE type IN ('table', 'view') ORDER BY name",
+                )
+                .fetch_all(pool)
+                .await?;
                 Ok(rows
                     .iter()
                     .map(|r| TableInfo {
@@ -396,23 +127,6 @@ impl DbPool {
                     .collect())
             }
         }
-    }
-
-    pub async fn create_database(&self, db_name: &str) -> Result<(), sqlx::Error> {
-        // Validate name to prevent SQL injection (only allow alphanumeric, underscore, hyphen)
-        if !db_name
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
-        {
-            return Err(sqlx::Error::Protocol("Invalid database name".into()));
-        }
-        let sql = match self {
-            DbPool::Postgres(_) => format!("CREATE DATABASE \"{}\"", db_name),
-            DbPool::Mysql(_) => format!("CREATE DATABASE `{}`", db_name),
-            DbPool::Sqlite(_) => return Ok(()), // SQLite creates on connect
-        };
-        self.run_query(&sql).await?;
-        Ok(())
     }
 
     pub async fn list_databases(&self) -> Result<Vec<String>, sqlx::Error> {
@@ -450,10 +164,26 @@ impl DbPool {
         }
     }
 
+    pub async fn create_database(&self, db_name: &str) -> Result<(), sqlx::Error> {
+        // Validate name to prevent SQL injection (only allow alphanumeric, underscore, hyphen)
+        if !db_name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err(sqlx::Error::Protocol("Invalid database name".into()));
+        }
+        let sql = match self {
+            DbPool::Postgres(_) => format!("CREATE DATABASE \"{}\"", db_name),
+            DbPool::Mysql(_) => format!("CREATE DATABASE `{}`", db_name),
+            DbPool::Sqlite(_) => return Ok(()), // SQLite creates on connect
+        };
+        self.run_query(&sql).await?;
+        Ok(())
+    }
+
     pub async fn get_table_definition(&self, table_name: &str) -> Result<String, sqlx::Error> {
         match self {
             DbPool::Postgres(pool) => {
-                // Get table schema
                 let rows = sqlx::query(
                     "SELECT column_name, udt_name, is_nullable, column_default, \
                      character_maximum_length, numeric_precision, numeric_scale \
@@ -537,7 +267,6 @@ impl DbPool {
                             .collect::<Vec<_>>()
                             .join(", ")
                     );
-                    // Insert before the closing parenthesis
                     result = format!(
                         "-- Table Definition\nCREATE TABLE \"public\".\"{}\" (\n{}{}\n);",
                         table_name,
@@ -564,9 +293,9 @@ impl DbPool {
                 }
             }
             DbPool::Sqlite(pool) => {
-                let rows = sqlx::query(&format!(
-                    "SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name=?"
-                ))
+                let rows = sqlx::query(
+                    "SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name=?",
+                )
                 .bind(table_name)
                 .fetch_all(pool)
                 .await?;
@@ -585,498 +314,5 @@ impl DbPool {
     }
 }
 
-// ── PostgreSQL ────────────────────────────────────────────────────────────────
-
-async fn pg_query(pool: &sqlx::PgPool, sql: &str) -> Result<QueryResult, sqlx::Error> {
-    let rows = sqlx::query(sql).fetch_all(pool).await?;
-    if rows.is_empty() {
-        return Ok(QueryResult {
-            columns: vec![],
-            rows: vec![],
-            rows_affected: Some(0),
-        });
-    }
-    let columns: Vec<String> = rows[0]
-        .columns()
-        .iter()
-        .map(|c| c.name().to_string())
-        .collect();
-    let result_rows = rows
-        .iter()
-        .map(|row| {
-            columns
-                .iter()
-                .enumerate()
-                .map(|(i, col)| (col.clone(), pg_value(row, i)))
-                .collect()
-        })
-        .collect();
-    Ok(QueryResult {
-        columns,
-        rows: result_rows,
-        rows_affected: None,
-    })
-}
-
-fn pg_value(row: &sqlx::postgres::PgRow, idx: usize) -> Value {
-    let type_name = row.columns()[idx].type_info().name().to_lowercase();
-
-    // integers — each pg integer type maps to a specific Rust type in sqlx
-    match type_name.as_str() {
-        "int2" => {
-            if let Ok(v) = row.try_get::<i16, _>(idx) {
-                return Value::Number(i64::from(v).into());
-            }
-        }
-        "int4" | "serial" => {
-            if let Ok(v) = row.try_get::<i32, _>(idx) {
-                return Value::Number(i64::from(v).into());
-            }
-        }
-        "int8" | "bigserial" => {
-            if let Ok(v) = row.try_get::<i64, _>(idx) {
-                return Value::Number(v.into());
-            }
-        }
-        _ => {}
-    }
-    // floats
-    if matches!(
-        type_name.as_str(),
-        "float4" | "float8" | "numeric" | "decimal"
-    ) {
-        if let Ok(v) = row.try_get::<f64, _>(idx) {
-            if let Some(n) = serde_json::Number::from_f64(v) {
-                return Value::Number(n);
-            }
-        }
-        if let Ok(v) = row.try_get::<bigdecimal::BigDecimal, _>(idx) {
-            return Value::String(v.to_string());
-        }
-    }
-    // bool
-    if type_name == "bool" {
-        if let Ok(v) = row.try_get::<bool, _>(idx) {
-            return Value::Bool(v);
-        }
-    }
-    // timestamps / dates / times → ISO string
-    if type_name.starts_with("timestamp") {
-        if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(idx) {
-            return Value::String(v.to_rfc3339());
-        }
-        if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(idx) {
-            return Value::String(v.to_string());
-        }
-    }
-    if type_name == "date" {
-        if let Ok(v) = row.try_get::<chrono::NaiveDate, _>(idx) {
-            return Value::String(v.to_string());
-        }
-    }
-    if type_name.starts_with("time") {
-        // timetz (time with time zone) needs PgTimeTz, not NaiveTime
-        if type_name == "timetz" {
-            if let Ok(v) = row.try_get::<sqlx::postgres::types::PgTimeTz, _>(idx) {
-                return Value::String(format!("{}{}", v.time, v.offset));
-            }
-        }
-        if let Ok(v) = row.try_get::<chrono::NaiveTime, _>(idx) {
-            return Value::String(v.to_string());
-        }
-    }
-    // uuid
-    if type_name == "uuid" {
-        if let Ok(v) = row.try_get::<uuid::Uuid, _>(idx) {
-            return Value::String(v.to_string());
-        }
-    }
-    // json / jsonb
-    if type_name == "json" || type_name == "jsonb" {
-        if let Ok(v) = row.try_get::<Value, _>(idx) {
-            return v;
-        }
-    }
-    // bytes
-    if type_name == "bytea" {
-        if let Ok(v) = row.try_get::<Vec<u8>, _>(idx) {
-            return Value::String(format!("\\x{}", hex::encode(v)));
-        }
-    }
-    // oid and oid-based types — sqlx represents these as Oid(u32), not u32 or String
-    if matches!(
-        type_name.as_str(),
-        "oid" | "xid" | "cid" | "regproc" | "regclass" | "regtype"
-    ) {
-        if let Ok(sqlx::postgres::types::Oid(v)) = row.try_get::<sqlx::postgres::types::Oid, _>(idx)
-        {
-            return Value::Number(u64::from(v).into());
-        }
-    }
-    // fallback: try String first, then read raw bytes to handle enums and
-    // other custom types whose OID doesn't match TEXT/VARCHAR
-    if let Ok(v) = row.try_get::<String, _>(idx) {
-        return Value::String(v);
-    }
-    {
-        use sqlx::ValueRef;
-        if let Ok(raw) = row.try_get_raw(idx) {
-            if !raw.is_null() {
-                if let Ok(bytes) = raw.as_bytes() {
-                    if let Ok(s) = std::str::from_utf8(bytes) {
-                        return Value::String(s.to_owned());
-                    }
-                }
-            }
-        }
-    }
-
-    Value::Null
-}
-
-// ── MySQL ─────────────────────────────────────────────────────────────────────
-
-async fn mysql_query(pool: &sqlx::MySqlPool, sql: &str) -> Result<QueryResult, sqlx::Error> {
-    let rows = sqlx::query(sql).fetch_all(pool).await?;
-    if rows.is_empty() {
-        return Ok(QueryResult {
-            columns: vec![],
-            rows: vec![],
-            rows_affected: Some(0),
-        });
-    }
-    let columns: Vec<String> = rows[0]
-        .columns()
-        .iter()
-        .map(|c| c.name().to_string())
-        .collect();
-    let result_rows = rows
-        .iter()
-        .map(|row| {
-            columns
-                .iter()
-                .enumerate()
-                .map(|(i, col)| (col.clone(), mysql_value(row, i)))
-                .collect()
-        })
-        .collect();
-    Ok(QueryResult {
-        columns,
-        rows: result_rows,
-        rows_affected: None,
-    })
-}
-
-fn mysql_value(row: &sqlx::mysql::MySqlRow, idx: usize) -> Value {
-    let type_name = row.columns()[idx].type_info().name().to_lowercase();
-
-    if type_name.contains("int") {
-        // Try unsigned first for "int unsigned", "bigint unsigned", etc.
-        if let Ok(v) = row.try_get::<u64, _>(idx) {
-            return Value::Number(v.into());
-        }
-        if let Ok(v) = row.try_get::<i64, _>(idx) {
-            return Value::Number(v.into());
-        }
-    }
-    if matches!(
-        type_name.as_str(),
-        "float" | "double" | "decimal" | "numeric"
-    ) {
-        if let Ok(v) = row.try_get::<f64, _>(idx) {
-            if let Some(n) = serde_json::Number::from_f64(v) {
-                return Value::Number(n);
-            }
-        }
-    }
-    if type_name == "tinyint(1)" || type_name == "boolean" {
-        if let Ok(v) = row.try_get::<bool, _>(idx) {
-            return Value::Bool(v);
-        }
-    }
-    if matches!(type_name.as_str(), "datetime" | "timestamp") {
-        // MySQL TIMESTAMP is UTC-aware; DATETIME is naive
-        if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(idx) {
-            return Value::String(v.format("%Y-%m-%d %H:%M:%S").to_string());
-        }
-        if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(idx) {
-            return Value::String(v.to_string());
-        }
-    }
-    if type_name == "date" {
-        if let Ok(v) = row.try_get::<chrono::NaiveDate, _>(idx) {
-            return Value::String(v.to_string());
-        }
-    }
-    if type_name == "time" {
-        if let Ok(v) = row.try_get::<chrono::NaiveTime, _>(idx) {
-            return Value::String(v.to_string());
-        }
-    }
-    if type_name == "json" {
-        if let Ok(v) = row.try_get::<Value, _>(idx) {
-            return v;
-        }
-    }
-    if let Ok(v) = row.try_get::<String, _>(idx) {
-        return Value::String(v);
-    }
-    if let Ok(bytes) = row.try_get::<Vec<u8>, _>(idx) {
-        return Value::String(String::from_utf8_lossy(&bytes).into_owned());
-    }
-
-    Value::Null
-}
-
-// ── SQLite ────────────────────────────────────────────────────────────────────
-
-async fn sqlite_query(pool: &sqlx::SqlitePool, sql: &str) -> Result<QueryResult, sqlx::Error> {
-    let rows = sqlx::query(sql).fetch_all(pool).await?;
-    if rows.is_empty() {
-        return Ok(QueryResult {
-            columns: vec![],
-            rows: vec![],
-            rows_affected: Some(0),
-        });
-    }
-    let columns: Vec<String> = rows[0]
-        .columns()
-        .iter()
-        .map(|c| c.name().to_string())
-        .collect();
-    let result_rows = rows
-        .iter()
-        .map(|row| {
-            columns
-                .iter()
-                .enumerate()
-                .map(|(i, col)| (col.clone(), sqlite_value(row, i)))
-                .collect()
-        })
-        .collect();
-    Ok(QueryResult {
-        columns,
-        rows: result_rows,
-        rows_affected: None,
-    })
-}
-
-fn sqlite_value(row: &sqlx::sqlite::SqliteRow, idx: usize) -> Value {
-    use sqlx::ValueRef;
-
-    // Check for NULL first before attempting any type conversion
-    // sqlx's try_get can return default values (0 for integers, "" for strings)
-    // when the column is NULL, so we must check explicitly.
-    if let Ok(raw) = row.try_get_raw(idx) {
-        if raw.is_null() {
-            return Value::Null;
-        }
-    }
-
-    // SQLite is dynamically typed — try in priority order
-    // IMPORTANT: Check integers BEFORE booleans because sqlx's try_get::<bool>
-    // succeeds for integer values (0 = false, non-zero = true), which would
-    // incorrectly convert INT columns to booleans.
-    if let Ok(v) = row.try_get::<i64, _>(idx) {
-        return Value::Number(v.into());
-    }
-    if let Ok(v) = row.try_get::<f64, _>(idx) {
-        if let Some(n) = serde_json::Number::from_f64(v) {
-            return Value::Number(n);
-        }
-    }
-    if let Ok(v) = row.try_get::<bool, _>(idx) {
-        return Value::Bool(v);
-    }
-    if let Ok(v) = row.try_get::<String, _>(idx) {
-        return Value::String(v);
-    }
-    Value::Null
-}
-
-// ── Export / Import ───────────────────────────────────────────────────────────
-
-fn quote_ident(name: &str, backtick: bool) -> String {
-    if backtick {
-        format!("`{}`", name)
-    } else {
-        format!("\"{}\"", name)
-    }
-}
-
-fn value_to_sql(value: &Value, is_mysql: bool) -> String {
-    match value {
-        Value::Null => "NULL".to_string(),
-        Value::Bool(b) => {
-            if is_mysql {
-                if *b { "1" } else { "0" }.to_string()
-            } else if *b {
-                "TRUE".to_string()
-            } else {
-                "FALSE".to_string()
-            }
-        }
-        Value::Number(n) => n.to_string(),
-        Value::String(s) => format!("'{}'", s.replace('\'', "''")),
-        other => format!(
-            "'{}'",
-            serde_json::to_string(other)
-                .unwrap_or_default()
-                .replace('\'', "''")
-        ),
-    }
-}
-
-/// Split a SQL string into individual statements, correctly handling single-quoted
-/// string literals and line comments so that semicolons inside them are not treated
-/// as statement boundaries.
-fn split_sql_statements(sql: &str) -> Vec<String> {
-    let mut statements: Vec<String> = Vec::new();
-    let mut current = String::new();
-    let mut in_string = false;
-    let mut chars = sql.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if in_string {
-            current.push(ch);
-            if ch == '\'' {
-                if chars.peek() == Some(&'\'') {
-                    current.push(chars.next().unwrap());
-                } else {
-                    in_string = false;
-                }
-            }
-        } else {
-            match ch {
-                '\'' => {
-                    in_string = true;
-                    current.push(ch);
-                }
-                '-' if chars.peek() == Some(&'-') => {
-                    // Line comment — consume to end of line, drop from output
-                    for c in chars.by_ref() {
-                        if c == '\n' {
-                            break;
-                        }
-                    }
-                }
-                ';' => {
-                    let stmt = current.trim().to_string();
-                    if !stmt.is_empty() {
-                        statements.push(stmt);
-                    }
-                    current.clear();
-                }
-                _ => current.push(ch),
-            }
-        }
-    }
-
-    let stmt = current.trim().to_string();
-    if !stmt.is_empty() {
-        statements.push(stmt);
-    }
-
-    statements
-}
-
-impl DbPool {
-    pub async fn export_table_sql(&self, table_name: &str) -> Result<String, sqlx::Error> {
-        let is_mysql = matches!(self, DbPool::Mysql(_));
-        let q = quote_ident(table_name, is_mysql);
-        let fq = match self {
-            DbPool::Postgres(_) => format!("\"public\".\"{}\"", table_name),
-            _ => q.clone(),
-        };
-
-        // Reuse get_table_definition; strip the leading comment line
-        let ddl_raw = self.get_table_definition(table_name).await?;
-        let ddl = ddl_raw
-            .strip_prefix("-- Table Definition\n")
-            .unwrap_or(&ddl_raw);
-
-        let mut out = String::new();
-        out.push_str(&format!("DROP TABLE IF EXISTS {};\n", fq));
-        out.push_str(ddl); // already ends with ";"
-        out.push_str("\n\n");
-
-        // Fetch all rows and emit INSERT statements
-        let result = self.run_query(&format!("SELECT * FROM {}", fq)).await?;
-        if !result.rows.is_empty() {
-            let col_list = result
-                .columns
-                .iter()
-                .map(|c| quote_ident(c, is_mysql))
-                .collect::<Vec<_>>()
-                .join(", ");
-            for row in &result.rows {
-                let vals = result
-                    .columns
-                    .iter()
-                    .map(|c| value_to_sql(row.get(c).unwrap_or(&Value::Null), is_mysql))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                out.push_str(&format!(
-                    "INSERT INTO {} ({}) VALUES ({});\n",
-                    q, col_list, vals
-                ));
-            }
-            out.push('\n');
-        }
-
-        Ok(out)
-    }
-
-    pub async fn export_database_sql(&self) -> Result<String, sqlx::Error> {
-        let driver_name = match self {
-            DbPool::Postgres(_) => "PostgreSQL",
-            DbPool::Mysql(_) => "MySQL",
-            DbPool::Sqlite(_) => "SQLite",
-        };
-        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
-        let mut out = format!(
-            "-- GSDB SQL Export\n-- Driver: {}\n-- Generated: {}\n\nBEGIN;\n\n",
-            driver_name, timestamp
-        );
-
-        for table in self.list_tables().await? {
-            out.push_str(&format!("-- Table: {}\n", table.name));
-            out.push_str(&self.export_table_sql(&table.name).await?);
-        }
-
-        out.push_str("COMMIT;\n");
-        Ok(out)
-    }
-
-    pub async fn import_sql(
-        &self,
-        sql: &str,
-        disable_fk_checks: bool,
-    ) -> Result<usize, sqlx::Error> {
-        if disable_fk_checks {
-            let stmt = match self {
-                DbPool::Postgres(_) => "SET session_replication_role = 'replica'",
-                DbPool::Mysql(_) => "SET FOREIGN_KEY_CHECKS = 0",
-                DbPool::Sqlite(_) => "PRAGMA foreign_keys = OFF",
-            };
-            self.run_query(stmt).await?;
-        }
-
-        let mut count = 0;
-        for stmt in split_sql_statements(sql) {
-            self.run_query(&stmt).await?;
-            count += 1;
-        }
-
-        if disable_fk_checks {
-            let stmt = match self {
-                DbPool::Postgres(_) => "SET session_replication_role = 'origin'",
-                DbPool::Mysql(_) => "SET FOREIGN_KEY_CHECKS = 1",
-                DbPool::Sqlite(_) => "PRAGMA foreign_keys = ON",
-            };
-            self.run_query(stmt).await?;
-        }
-
-        Ok(count)
-    }
-}
+// sqlx traits needed for try_get in list_tables / get_table_definition
+use sqlx::Row;
