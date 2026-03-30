@@ -12,8 +12,8 @@ help:
 	@echo "GSDB Makefile"
 	@echo ""
 	@echo "Usage:"
-	@echo "  make icons          - Regenerate all app icons from SVG sources
-  make build          - Build the application (binary, deb, rpm, appimage)"
+	@echo "  make icons          - Regenerate all app icons from SVG sources"
+	@echo "  make build          - Build the application (binary, deb, rpm, appimage)"
 	@echo "  make release        - Push commits, tag, and create a GitHub release with AppImage"
 	@echo "  make aur-deploy     - Copy AUR files to local gsdb/gsdb-bin repos"
 	@echo "  make version        - Show current version"

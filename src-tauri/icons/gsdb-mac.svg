@@ -7,15 +7,19 @@
     </linearGradient>
   </defs>
 
-  <!-- macOS squircle background: corner radius ~22.5% of 1024 = 230px -->
-  <rect width="1024" height="1024" rx="230" ry="230" fill="white"/>
+  <!--
+    macOS squircle background: leave ~40px margin on each side so the system
+    drop shadow renders cleanly and the icon looks proportionally sized in the Dock.
+    Squircle: x=40, y=40, size=944x944, corner radius ~22.5% of 944 ≈ 212px
+  -->
+  <rect x="40" y="40" width="944" height="944" rx="212" ry="212" fill="white"/>
 
   <!--
     Original icon viewBox: 122.88 x 122.88
-    Target size: 72% of 1024 = 737.28px  →  scale = 737.28 / 122.88 ≈ 6.0
-    Centered offset: (1024 - 737.28) / 2 ≈ 143px
+    Target size: 72% of 944 (usable area) = 679.7px  →  scale = 679.7 / 122.88 ≈ 5.53
+    Centered offset: 40 + (944 - 679.7) / 2 ≈ 172px
   -->
-  <g transform="translate(143, 143) scale(6.0)">
+  <g transform="translate(172, 172) scale(5.53)">
     <g transform="translate(8.9, 0)">
       <path
         fill="url(#iconGradient)"
