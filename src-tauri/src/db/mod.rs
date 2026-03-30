@@ -795,6 +795,10 @@ fn mysql_value(row: &sqlx::mysql::MySqlRow, idx: usize) -> Value {
         }
     }
     if matches!(type_name.as_str(), "datetime" | "timestamp") {
+        // MySQL TIMESTAMP is UTC-aware; DATETIME is naive
+        if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(idx) {
+            return Value::String(v.format("%Y-%m-%d %H:%M:%S").to_string());
+        }
         if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(idx) {
             return Value::String(v.to_string());
         }
