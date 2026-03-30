@@ -1,6 +1,6 @@
 {
   "name": "gsdb",
-  "version": "0.2.42",
+  "version": "0.2.43",
   "description": "A database management tool",
   "type": "module",
   "scripts": {
@@ -21,6 +21,7 @@
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-fs": "^2.4.5",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-os": "^2.3.2",
     "@tauri-apps/plugin-store": "^2.4.2",
     "@tauri-apps/plugin-window-state": "^2.2.0",
     "codemirror": "^6.0.2",

@@ -1,6 +1,6 @@
 [package]
 name = "gsdb"
-version = "0.2.42"
+version = "0.2.43"
 description = "A database management tool"
 authors = ["you"]
 edition = "2021"
@@ -46,6 +46,7 @@ ssh2 = { version = "0.9", features = ["vendored-openssl"] }
 tempfile = "3"
 tokio-socks = "0.5"
 tauri-plugin-window-state = "2"
+tauri-plugin-os = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri = { version = "2", features = ["macos-private-api"] }

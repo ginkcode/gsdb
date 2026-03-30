@@ -21,8 +21,7 @@ pub fn run() {
                 let window = _app.get_webview_window("main").unwrap();
                 let ns_win = window.ns_window().unwrap() as *mut objc::runtime::Object;
                 unsafe {
-                    let clear: *mut objc::runtime::Object =
-                        msg_send![class!(NSColor), clearColor];
+                    let clear: *mut objc::runtime::Object = msg_send![class!(NSColor), clearColor];
                     let _: () = msg_send![ns_win, setBackgroundColor: clear];
                     let _: () = msg_send![ns_win, setOpaque: false as objc::runtime::BOOL];
                 }
@@ -35,6 +34,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
+        .plugin(tauri_plugin_os::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             add_connection,

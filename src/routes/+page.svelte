@@ -50,6 +50,7 @@
   // Load saved connections on mount
   onMount((): (() => void) => {
     loadSavedConnections();
+    platform.initialize();
 
     const appWindow = getCurrentWindow();
     let unlisten: (() => void) | undefined;
