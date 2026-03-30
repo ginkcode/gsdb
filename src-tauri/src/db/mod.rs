@@ -574,6 +574,12 @@ fn pg_value(row: &sqlx::postgres::PgRow, idx: usize) -> Value {
             return Value::String(format!("\\x{}", hex::encode(v)));
         }
     }
+    // oid and oid-based types — sqlx represents these as Oid(u32), not u32 or String
+    if matches!(type_name.as_str(), "oid" | "xid" | "cid" | "regproc" | "regclass" | "regtype") {
+        if let Ok(sqlx::postgres::types::Oid(v)) = row.try_get::<sqlx::postgres::types::Oid, _>(idx) {
+            return Value::Number(u64::from(v).into());
+        }
+    }
     // fallback: everything else as string
     if let Ok(v) = row.try_get::<String, _>(idx) {
         return Value::String(v);
