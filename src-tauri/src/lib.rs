@@ -17,9 +17,9 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 use objc::{class, msg_send, sel, sel_impl};
-                use tauri::{Manager, WebviewWindowExtMacOS};
+                use tauri::Manager;
                 let window = _app.get_webview_window("main").unwrap();
-                let ns_win = window.ns_window() as *mut objc::runtime::Object;
+                let ns_win = window.ns_window().unwrap() as *mut objc::runtime::Object;
                 unsafe {
                     let clear: *mut objc::runtime::Object =
                         msg_send![class!(NSColor), clearColor];
