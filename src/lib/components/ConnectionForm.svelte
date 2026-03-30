@@ -3,6 +3,8 @@
   import * as Select from "$lib/components/ui/select";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
+  import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+  import { readTextFile } from "@tauri-apps/plugin-fs";
   import type { Connection, DbDriver, SshTunnel } from "$lib/types";
 
   let {
@@ -60,6 +62,17 @@
   let sshPassword = $state("");
   let sshPrivateKey = $state("");
   let sshPrivateKeyPassphrase = $state("");
+  // true when editing a connection that already has a saved key and the user
+  // hasn't chosen to replace it yet
+  let sshKeySaved = $state(false);
+
+  async function pickKeyFile() {
+    const path = await openFileDialog({ multiple: false, directory: false });
+    if (!path) return;
+    const content = await readTextFile(path as string);
+    sshPrivateKey = content;
+    sshKeySaved = false;
+  }
 
   const colorOptions = [
     {
@@ -140,6 +153,8 @@
           sshPassword = editing.ssh.password ?? "";
           sshPrivateKey = editing.ssh.privateKey ?? "";
           sshPrivateKeyPassphrase = editing.ssh.privateKeyPassphrase ?? "";
+          // If a key is already saved, hide the textarea until user chooses to change it
+          sshKeySaved = !!editing.ssh.privateKey;
         } else {
           sshHost = "";
           sshPort = 22;
@@ -147,6 +162,7 @@
           sshPassword = "";
           sshPrivateKey = "";
           sshPrivateKeyPassphrase = "";
+          sshKeySaved = false;
         }
       } else {
         // Reset to defaults for new connection
@@ -167,6 +183,7 @@
         sshPassword = "";
         sshPrivateKey = "";
         sshPrivateKeyPassphrase = "";
+        sshKeySaved = false;
       }
     }
   });
@@ -362,17 +379,36 @@
               />
             </div>
             <div class="grid gap-1.5">
-              <label class="text-sm font-medium" for="ssh-key"
-                >Private Key</label
-              >
-              <Input
-                id="ssh-key"
-                type="password"
-                bind:value={sshPrivateKey}
-                placeholder="Paste private key or leave empty for agent"
-              />
+              <div class="flex items-center justify-between">
+                <label class="text-sm font-medium" for="ssh-key">Private Key</label>
+                <Button variant="outline" size="sm" class="h-7 text-xs" onclick={pickKeyFile}>
+                  Select file…
+                </Button>
+              </div>
+              {#if sshKeySaved}
+                <div class="flex items-center justify-between rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  <span>Key saved — leave unchanged or replace below</span>
+                  <button
+                    type="button"
+                    class="text-xs underline hover:text-foreground"
+                    onclick={() => { sshKeySaved = false; sshPrivateKey = ""; }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              {:else}
+                <textarea
+                  id="ssh-key"
+                  bind:value={sshPrivateKey}
+                  placeholder="Paste private key or select a file…"
+                  rows={6}
+                  spellcheck={false}
+                  autocomplete="off"
+                  class="w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono text-foreground shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
+                ></textarea>
+              {/if}
               <p class="text-xs text-muted-foreground">
-                Paste your private key or leave empty to use SSH agent
+                Leave empty to use SSH agent
               </p>
             </div>
             <div class="grid gap-1.5">

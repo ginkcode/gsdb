@@ -43,6 +43,7 @@ tauri-plugin-keyring = "0.1.0"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 ssh2 = { version = "0.9", features = ["vendored-openssl"] }
+tempfile = "3"
 tokio-socks = "0.5"
 tauri-plugin-window-state = "2"
 
