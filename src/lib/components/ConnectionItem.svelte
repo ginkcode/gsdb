@@ -52,6 +52,7 @@
     onChangeDatabase: () => void;
     onDelete: () => void;
     onOpenTable: (tableName: string) => void;
+    onPreviewTable: (tableName: string) => void;
     onShowTableInfo: (tableName: string) => void;
     onExportTable: (tableName: string) => void;
     onImportTable: (tableName: string) => void;
@@ -78,6 +79,7 @@
     onChangeDatabase,
     onDelete,
     onOpenTable,
+    onPreviewTable,
     onShowTableInfo,
     onExportTable,
     onImportTable,
@@ -133,7 +135,10 @@
   </Item>
   <Separator />
   {#if connection.driver !== "sqlite"}
-    <Item class="flex items-center gap-2 cursor-pointer" onclick={onChangeDatabase}>
+    <Item
+      class="flex items-center gap-2 cursor-pointer"
+      onclick={onChangeDatabase}
+    >
       <Database class="w-4 h-4" /><span>Change Database</span>
     </Item>
   {/if}
@@ -241,6 +246,7 @@
       <TableItem
         tableName={table}
         onOpenTable={() => onOpenTable(table)}
+        onPreviewTable={() => onPreviewTable(table)}
         onShowInfo={() => onShowTableInfo(table)}
         onExport={() => onExportTable(table)}
         onImport={() => onImportTable(table)}

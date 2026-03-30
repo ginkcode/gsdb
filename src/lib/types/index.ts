@@ -38,4 +38,5 @@ export interface QueryTab {
   sql: string;
   result?: QueryResult;
   isLoading: boolean;
+  temporary?: boolean; // preview tab opened by single click; replaced on next single click
 }

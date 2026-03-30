@@ -11,6 +11,7 @@
     activeConnectionId,
     addTab,
     openTableTab,
+    openTableTabPreview,
     reconnectConnection,
     updateConnection,
     closeTabsByConnection,
@@ -377,6 +378,8 @@
         onDelete={() => onDeleteConnection(conn)}
         onOpenTable={(table) =>
           openTableTab(conn.id, table, `SELECT * FROM ${table} LIMIT 100;`)}
+        onPreviewTable={(table) =>
+          openTableTabPreview(conn.id, table, `SELECT * FROM ${table} LIMIT 100;`)}
         onShowTableInfo={(table) => showTableInfo(conn.id, table)}
         onExportTable={(table) => exportTable(conn.id, table)}
         onImportTable={() => importSql(conn.id)}

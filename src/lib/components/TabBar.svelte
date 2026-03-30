@@ -87,7 +87,7 @@
               {driverLabel[conn.driver]}
             </span>
           {/if}
-          <span>{tab.title}</span>
+          <span class={tab.temporary ? "italic" : ""}>{tab.title}</span>
           {#if tab.isLoading}
             <span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"
             ></span>

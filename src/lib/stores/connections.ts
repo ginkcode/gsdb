@@ -214,12 +214,14 @@ export async function reconnectConnection(connId: string): Promise<void> {
 async function saveTabs(tabs: QueryTab[], activeId: string | null, activeConnId: string | null): Promise<void> {
   try {
     const s = await getStore();
-    // Save tabs without results (too large and transient)
-    const tabsWithoutResults = tabs.map((t) => ({
-      ...t,
-      result: undefined,
-      isLoading: false,
-    }));
+    // Save tabs without results (too large and transient); drop temporary preview tabs
+    const tabsWithoutResults = tabs
+      .filter((t) => !t.temporary)
+      .map((t) => ({
+        ...t,
+        result: undefined,
+        isLoading: false,
+      }));
     await s.set(TABS_STORE_KEY, tabsWithoutResults);
     await s.set(ACTIVE_TAB_STORE_KEY, activeId);
     await s.set(ACTIVE_CONNECTION_STORE_KEY, activeConnId);
@@ -285,25 +287,87 @@ export function findTabByTitle(connectionId: string, title: string): QueryTab | 
 }
 
 export function openTableTab(connectionId: string, tableName: string, sql: string): QueryTab {
-  // Set the active connection
   activeConnectionId.set(connectionId);
-  
-  // Check if tab for this table already exists
-  let existingTab: QueryTab | undefined;
-  queryTabs.subscribe((tabs) => {
-    existingTab = tabs.find(
-      (t) => t.connectionId === connectionId && t.title === tableName
-    );
-  })();
 
+  let tabs: QueryTab[] = [];
+  queryTabs.subscribe((t) => { tabs = t; })();
+
+  // If there's an existing permanent tab for this table, just activate it
+  const existingTab = tabs.find(
+    (t) => t.connectionId === connectionId && t.title === tableName && !t.temporary
+  );
   if (existingTab) {
-    // Switch to existing tab
     activeTabId.set(existingTab.id);
     return existingTab;
   }
 
-  // Create new tab with table name as title
-  return addTab(connectionId, sql, tableName);
+  // Promote the temporary tab for this table to permanent (double-clicked)
+  const tempTab = tabs.find(
+    (t) => t.connectionId === connectionId && t.title === tableName && t.temporary
+  );
+  if (tempTab) {
+    queryTabs.update((ts) =>
+      ts.map((t) => (t.id === tempTab.id ? { ...t, temporary: false } : t))
+    );
+    activeTabId.set(tempTab.id);
+    return { ...tempTab, temporary: false };
+  }
+
+  // Remove any existing temporary tab before opening a new permanent one
+  queryTabs.update((ts) => ts.filter((t) => !t.temporary));
+
+  const tab: QueryTab = {
+    id: crypto.randomUUID(),
+    connectionId,
+    title: tableName,
+    sql,
+    isLoading: false,
+    temporary: false,
+  };
+  queryTabs.update((ts) => [...ts, tab]);
+  activeTabId.set(tab.id);
+  return tab;
+}
+
+export function openTableTabPreview(connectionId: string, tableName: string, sql: string): QueryTab {
+  activeConnectionId.set(connectionId);
+
+  let tabs: QueryTab[] = [];
+  queryTabs.subscribe((t) => { tabs = t; })();
+
+  // If a permanent tab for this table already exists, just activate it
+  const existingPermanent = tabs.find(
+    (t) => t.connectionId === connectionId && t.title === tableName && !t.temporary
+  );
+  if (existingPermanent) {
+    activeTabId.set(existingPermanent.id);
+    return existingPermanent;
+  }
+
+  // If the temporary tab is already showing this table, just activate it
+  const existingTemp = tabs.find(
+    (t) => t.connectionId === connectionId && t.title === tableName && t.temporary
+  );
+  if (existingTemp) {
+    activeTabId.set(existingTemp.id);
+    return existingTemp;
+  }
+
+  // Replace any existing temporary tab with one for the new table
+  const tab: QueryTab = {
+    id: crypto.randomUUID(),
+    connectionId,
+    title: tableName,
+    sql,
+    isLoading: false,
+    temporary: true,
+  };
+  queryTabs.update((ts) => {
+    const withoutTemp = ts.filter((t) => !t.temporary);
+    return [...withoutTemp, tab];
+  });
+  activeTabId.set(tab.id);
+  return tab;
 }
 
 export function closeTab(tabId: string) {

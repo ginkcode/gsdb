@@ -12,7 +12,8 @@
 
   interface Props {
     tableName: string;
-    onOpenTable: () => void;
+    onOpenTable: () => void;       // double click → permanent tab
+    onPreviewTable: () => void;    // single click → temporary tab
     onShowInfo: () => void;
     onExport: () => void;
     onImport: () => void;
@@ -24,6 +25,7 @@
   let {
     tableName,
     onOpenTable,
+    onPreviewTable,
     onShowInfo,
     onExport,
     onImport,
@@ -31,6 +33,23 @@
     onTruncate,
     onDrop,
   }: Props = $props();
+
+  // Distinguish single vs double click without a delay by tracking clicks manually
+  let clickTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function handleClick() {
+    if (clickTimer) {
+      // Second click arrived quickly — treat as double click
+      clearTimeout(clickTimer);
+      clickTimer = undefined;
+      onOpenTable();
+    } else {
+      clickTimer = setTimeout(() => {
+        clickTimer = undefined;
+        onPreviewTable();
+      }, 250);
+    }
+  }
 </script>
 
 {#snippet tableMenuItems(Item: any, Separator: any)}
@@ -70,7 +89,7 @@
     <div class="group flex items-center gap-1 min-w-0">
       <button
         class="flex-1 min-w-0 flex items-center gap-2 px-2 py-1 rounded text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors text-left"
-        onclick={onOpenTable}
+        onclick={handleClick}
       >
         <Table class="w-3 h-3 shrink-0" />
         <span class="truncate">{tableName}</span>
