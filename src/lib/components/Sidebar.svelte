@@ -1,5 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { getVersion } from "@tauri-apps/api/app";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import type { Snippet } from "svelte";
   import { toast } from "svelte-sonner";
   import { Plus, Database } from "@lucide/svelte";
@@ -36,6 +38,40 @@
     onNewConnection: () => void;
     header?: Snippet;
   } = $props();
+
+  const RELEASES_URL = "https://github.com/ginkcode/gsdb/releases/latest";
+
+  let appVersion = $state("");
+  let updateAvailable = $state(false);
+
+  function isNewerVersion(latest: string, current: string): boolean {
+    const lp = latest.split(".").map(Number);
+    const cp = current.split(".").map(Number);
+    for (let i = 0; i < Math.max(lp.length, cp.length); i++) {
+      const l = lp[i] ?? 0;
+      const c = cp[i] ?? 0;
+      if (l > c) return true;
+      if (l < c) return false;
+    }
+    return false;
+  }
+
+  getVersion().then(async (v) => {
+    appVersion = v;
+    try {
+      const res = await fetch(
+        "https://api.github.com/repos/ginkcode/gsdb/releases/latest",
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const latest = String(data.tag_name ?? "").replace(/^v/, "");
+      if (latest && isNewerVersion(latest, v)) {
+        updateAvailable = true;
+      }
+    } catch {
+      // silently ignore — no network or rate limit
+    }
+  });
 
   let expandedConnections = $state<Set<string>>(new Set());
   let connectionTables = $state<Record<string, TableInfo[]>>({});
@@ -455,4 +491,18 @@
     loading={tableInfoLoading}
     onClose={() => (tableInfoOpen = false)}
   />
+
+  {#if appVersion}
+    <div class="px-4 py-2 border-t border-border shrink-0 flex items-center justify-between gap-2">
+      <p class="text-[10px] text-muted-foreground">v{appVersion}</p>
+      {#if updateAvailable}
+        <button
+          class="text-[10px] text-primary hover:underline underline-offset-2 shrink-0"
+          onclick={() => openUrl(RELEASES_URL)}
+        >
+          Update available
+        </button>
+      {/if}
+    </div>
+  {/if}
 </aside>
