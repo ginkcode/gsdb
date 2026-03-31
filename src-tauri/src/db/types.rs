@@ -98,8 +98,10 @@ impl Connection {
 // ── Query result ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct QueryResult {
     pub columns: Vec<String>,
+    pub column_types: Vec<String>,
     pub rows: Vec<HashMap<String, Value>>,
     pub rows_affected: Option<u64>,
 }

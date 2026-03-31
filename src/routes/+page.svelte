@@ -172,6 +172,7 @@
   });
 
   let columns = $derived($activeTab?.result?.columns ?? []);
+  let columnTypes = $derived($activeTab?.result?.columnTypes ?? []);
 </script>
 
 <!-- Theme-aware root -->
@@ -232,6 +233,7 @@
               <RowDetailPanel
                 row={selectedRow}
                 {columns}
+                {columnTypes}
                 connectionId={$activeTab?.connectionId}
                 tableName={$activeTab?.title !== "Query"
                   ? $activeTab?.title

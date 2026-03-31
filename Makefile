@@ -93,6 +93,8 @@ endif
 	sed -i 's/pkgrel=.*/pkgrel=1/' pkg/aur/PKGBUILD-bin
 	@# Regenerate .SRCINFO files from updated PKGBUILDs
 	$(MAKE) aur
+	@# Update package-lock.json
+	npm install --package-lock-only
 	@echo "Version updated to $(V)"
 	@echo "Don't forget to:"
 	@echo "  1. git add ."

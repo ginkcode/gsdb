@@ -9,6 +9,7 @@
   let {
     row,
     columns,
+    columnTypes = [],
     connectionId,
     tableName,
     onClose,
@@ -16,6 +17,7 @@
   }: {
     row: Record<string, unknown> | null;
     columns: string[];
+    columnTypes?: string[];
     connectionId?: string;
     tableName?: string;
     onClose: () => void;
@@ -62,7 +64,8 @@
     nullFields = { ...nullFields, [col]: false };
   }
 
-  function getValueType(value: unknown): string {
+  function getValueType(value: unknown, colIndex: number): string {
+    if (columnTypes[colIndex]) return columnTypes[colIndex];
     if (value === null || value === undefined) return "null";
     if (typeof value === "boolean") return "boolean";
     if (typeof value === "number") return "number";
@@ -204,9 +207,9 @@
   {#if row}
     <ScrollArea class="flex-1 h-0">
       <div class="p-4 space-y-4">
-        {#each columns as col}
+        {#each columns as col, colIdx}
           {@const value = row[col]}
-          {@const valueType = getValueType(value)}
+          {@const valueType = getValueType(value, colIdx)}
           {@const changed = isChanged(col)}
           {@const error = fieldErrors[col]}
           {@const isNull = nullFields[col] ?? false}
@@ -215,7 +218,7 @@
 
           <div class="space-y-1.5">
             <div class="flex items-center justify-between">
-              <span class="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              <span class="text-xs font-medium text-muted-foreground">
                 {col}
                 {#if error}
                   <span class="ml-1 text-destructive">•</span>
@@ -227,14 +230,6 @@
                 <span class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                   {valueType}
                 </span>
-                {#if !isNull}
-                  <button
-                    type="button"
-                    class="text-[10px] px-1.5 py-0.5 rounded border border-dashed border-muted-foreground/40 text-muted-foreground hover:border-destructive/60 hover:text-destructive transition-colors"
-                    onclick={() => setNull(col)}
-                    title="Set to NULL"
-                  >NULL</button>
-                {/if}
                 <Button
                   variant="ghost"
                   size="icon"

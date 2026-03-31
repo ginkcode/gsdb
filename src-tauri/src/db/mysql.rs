@@ -8,6 +8,7 @@ pub async fn mysql_query(pool: &sqlx::MySqlPool, sql: &str) -> Result<QueryResul
     if rows.is_empty() {
         return Ok(QueryResult {
             columns: vec![],
+            column_types: vec![],
             rows: vec![],
             rows_affected: Some(0),
         });
@@ -16,6 +17,11 @@ pub async fn mysql_query(pool: &sqlx::MySqlPool, sql: &str) -> Result<QueryResul
         .columns()
         .iter()
         .map(|c| c.name().to_string())
+        .collect();
+    let column_types: Vec<String> = rows[0]
+        .columns()
+        .iter()
+        .map(|c| c.type_info().name().to_lowercase())
         .collect();
     let result_rows = rows
         .iter()
@@ -29,6 +35,7 @@ pub async fn mysql_query(pool: &sqlx::MySqlPool, sql: &str) -> Result<QueryResul
         .collect();
     Ok(QueryResult {
         columns,
+        column_types,
         rows: result_rows,
         rows_affected: None,
     })
