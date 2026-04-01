@@ -203,21 +203,12 @@ jobs:
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
           gpg --list-secret-keys
 
-      - name: Checkout repository with full history
+      - name: Checkout ginkcode.github.io repo
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          repository: ginkcode/ginkcode.github.io
+          token: ${{ secrets.RELEASE_PAGES_TOKEN }}
           path: repo
-
-      - name: Setup gh-pages branch
-        run: |
-          cd repo
-          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
-            git checkout gh-pages
-          else
-            git checkout --orphan gh-pages
-            git rm -rf .
-          fi
 
       - name: Build apt repository
         run: |
@@ -265,24 +256,24 @@ jobs:
           <h1>GSDB Package Repository</h1>
           <h2>Debian/Ubuntu (apt)</h2>
           <pre>
-          curl -fsSL https://${{ github.repository_owner }}.github.io/gsdb/gpg.key \
+          curl -fsSL https://ginkcode.github.io/gsdb/gpg.key \
             | sudo gpg --dearmor -o /usr/share/keyrings/gsdb.gpg
           echo "deb [signed-by=/usr/share/keyrings/gsdb.gpg] \
-            https://${{ github.repository_owner }}.github.io/gsdb/apt stable main" \
+            https://ginkcode.github.io/gsdb/apt stable main" \
             | sudo tee /etc/apt/sources.list.d/gsdb.list
           sudo apt update
           sudo apt install gsdb
           </pre>
           <h2>RHEL/Fedora (yum/dnf)</h2>
           <pre>
-          sudo rpm --import https://${{ github.repository_owner }}.github.io/gsdb/gpg.key
+          sudo rpm --import https://ginkcode.github.io/gsdb/gpg.key
           sudo tee /etc/yum.repos.d/gsdb.repo &lt;&lt; 'REPO'
           [gsdb]
           name=GSDB Repository
-          baseurl=https://${{ github.repository_owner }}.github.io/gsdb/rpm
+          baseurl=https://ginkcode.github.io/gsdb/rpm
           enabled=1
           gpgcheck=1
-          gpgkey=https://${{ github.repository_owner }}.github.io/gsdb/gpg.key
+          gpgkey=https://ginkcode.github.io/gsdb/gpg.key
           REPO
           sudo dnf install gsdb
           </pre>
@@ -291,11 +282,11 @@ jobs:
           EOF
           fi
 
-      - name: Commit and push to gh-pages
+      - name: Commit and push to ginkcode.github.io
         run: |
           cd repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          git diff --cached --quiet || git commit -m "Update packages for ${{ github.ref_name }}"
-          git push origin gh-pages
+          git diff --cached --quiet || git commit -m "Update gsdb packages for ${{ github.ref_name }}"
+          git push origin main

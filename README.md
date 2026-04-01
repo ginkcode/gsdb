@@ -23,6 +23,36 @@ yay -S gsdb
 yay -S gsdb-bin
 ```
 
+### Debian / Ubuntu (apt)
+
+```bash
+curl -fsSL https://ginkcode.github.io/gsdb/gpg.key \
+  | sudo gpg --dearmor -o /usr/share/keyrings/gsdb.gpg
+echo "deb [signed-by=/usr/share/keyrings/gsdb.gpg] https://ginkcode.github.io/gsdb/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/gsdb.list
+sudo apt update
+sudo apt install gsdb
+```
+
+### RHEL / Fedora (dnf)
+
+```bash
+sudo rpm --import https://ginkcode.github.io/gsdb/gpg.key
+sudo tee /etc/yum.repos.d/gsdb.repo << 'EOF'
+[gsdb]
+name=GSDB Repository
+baseurl=https://ginkcode.github.io/gsdb/rpm
+enabled=1
+gpgcheck=1
+gpgkey=https://ginkcode.github.io/gsdb/gpg.key
+EOF
+sudo dnf install gsdb
+```
+
+### Direct download
+
+Download the latest AppImage, `.deb`, `.rpm`, `.dmg`, or `.exe` from the [GitHub Releases](https://github.com/ginkcode/gsdb/releases/latest) page.
+
 ### From Source
 
 ```bash
