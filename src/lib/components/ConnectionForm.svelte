@@ -234,12 +234,17 @@
           }
         : undefined;
 
+    // For SQLite, use the filename as the database name
+    const dbDisplayName = driver === "sqlite"
+      ? filePath ? filePath.split("/").pop()?.split("\\").pop() || "sqlite" : "sqlite"
+      : database;
+
     const conn: Connection = {
       id: editing?.id ?? crypto.randomUUID(),
-      name: name || `${driver}/${database}`,
+      name: name || `${driver}/${dbDisplayName}`,
       driver,
       color,
-      database,
+      database: driver === "sqlite" ? (filePath || "sqlite") : database,
       ...(driver !== "sqlite" ? { host, port, username, password } : {}),
       ...(driver === "sqlite" ? { filePath } : {}),
       ...(driver === "postgres" || driver === "mysql" || driver === "sqlserver"

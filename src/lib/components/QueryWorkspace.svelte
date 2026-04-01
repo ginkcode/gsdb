@@ -57,7 +57,9 @@
             ? "mysql"
             : $activeConnection?.driver === "postgres"
               ? "postgresql"
-              : "sql"}
+              : $activeConnection?.driver === "sqlserver"
+                ? "transactsql"
+                : "sql"}
           onRun={(sql) => runQuery(tab.id, sql)}
         />
         <div
