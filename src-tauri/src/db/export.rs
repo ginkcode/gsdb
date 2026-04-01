@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use super::DbPool;
+use super::{DbError, DbPool, Dialect};
 
 fn quote_ident(name: &str, backtick: bool) -> String {
     if backtick {
@@ -59,7 +59,6 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
                     current.push(ch);
                 }
                 '-' if chars.peek() == Some(&'-') => {
-                    // Line comment — consume to end of line, drop from output
                     for c in chars.by_ref() {
                         if c == '\n' {
                             break;
@@ -87,15 +86,15 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
 }
 
 impl DbPool {
-    pub async fn export_table_sql(&self, table_name: &str) -> Result<String, sqlx::Error> {
-        let is_mysql = matches!(self, DbPool::Mysql(_));
+    pub async fn export_table_sql(&self, table_name: &str) -> Result<String, DbError> {
+        let is_mysql = self.dialect() == Dialect::Mysql;
         let q = quote_ident(table_name, is_mysql);
-        let fq = match self {
-            DbPool::Postgres(_) => format!("\"public\".\"{}\"", table_name),
-            _ => q.clone(),
+        let fq = if self.dialect() == Dialect::Postgres {
+            format!("\"public\".\"{}\"", table_name)
+        } else {
+            q.clone()
         };
 
-        // Reuse get_table_definition; strip the leading comment line
         let ddl_raw = self.get_table_definition(table_name).await?;
         let ddl = ddl_raw
             .strip_prefix("-- Table Definition\n")
@@ -103,10 +102,9 @@ impl DbPool {
 
         let mut out = String::new();
         out.push_str(&format!("DROP TABLE IF EXISTS {};\n", fq));
-        out.push_str(ddl); // already ends with ";"
+        out.push_str(ddl);
         out.push_str("\n\n");
 
-        // Fetch all rows and emit INSERT statements
         let result = self.run_query(&format!("SELECT * FROM {}", fq)).await?;
         if !result.rows.is_empty() {
             let col_list = result
@@ -133,11 +131,12 @@ impl DbPool {
         Ok(out)
     }
 
-    pub async fn export_database_sql(&self) -> Result<String, sqlx::Error> {
-        let driver_name = match self {
-            DbPool::Postgres(_) => "PostgreSQL",
-            DbPool::Mysql(_) => "MySQL",
-            DbPool::Sqlite(_) => "SQLite",
+    pub async fn export_database_sql(&self) -> Result<String, DbError> {
+        let driver_name = match self.dialect() {
+            Dialect::Postgres => "PostgreSQL",
+            Dialect::Mysql => "MySQL",
+            Dialect::Sqlite => "SQLite",
+            Dialect::SqlServer => "SQL Server",
         };
         let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
         let mut out = format!(
@@ -158,12 +157,13 @@ impl DbPool {
         &self,
         sql: &str,
         disable_fk_checks: bool,
-    ) -> Result<usize, sqlx::Error> {
+    ) -> Result<usize, DbError> {
         if disable_fk_checks {
-            let stmt = match self {
-                DbPool::Postgres(_) => "SET session_replication_role = 'replica'",
-                DbPool::Mysql(_) => "SET FOREIGN_KEY_CHECKS = 0",
-                DbPool::Sqlite(_) => "PRAGMA foreign_keys = OFF",
+            let stmt = match self.dialect() {
+                Dialect::Postgres => "SET session_replication_role = 'replica'",
+                Dialect::Mysql => "SET FOREIGN_KEY_CHECKS = 0",
+                Dialect::Sqlite => "PRAGMA foreign_keys = OFF",
+                Dialect::SqlServer => "EXEC sp_MSforeachtable 'ALTER TABLE ? NOCHECK CONSTRAINT ALL'",
             };
             self.run_query(stmt).await?;
         }
@@ -175,10 +175,11 @@ impl DbPool {
         }
 
         if disable_fk_checks {
-            let stmt = match self {
-                DbPool::Postgres(_) => "SET session_replication_role = 'origin'",
-                DbPool::Mysql(_) => "SET FOREIGN_KEY_CHECKS = 1",
-                DbPool::Sqlite(_) => "PRAGMA foreign_keys = ON",
+            let stmt = match self.dialect() {
+                Dialect::Postgres => "SET session_replication_role = 'origin'",
+                Dialect::Mysql => "SET FOREIGN_KEY_CHECKS = 1",
+                Dialect::Sqlite => "PRAGMA foreign_keys = ON",
+                Dialect::SqlServer => "EXEC sp_MSforeachtable 'ALTER TABLE ? CHECK CONSTRAINT ALL'",
             };
             self.run_query(stmt).await?;
         }

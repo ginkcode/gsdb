@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sqlx::mysql::{MySqlConnectOptions, MySqlSslMode};
+use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use std::collections::HashMap;
 
 // ── Table info (table vs view) ────────────────────────────────────────────────
@@ -44,55 +46,81 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn to_url(&self) -> String {
-        match self.driver.as_str() {
-            "postgres" => format!(
-                "postgres://{}:{}@{}:{}/{}?sslmode={}",
-                self.username.as_deref().unwrap_or(""),
-                self.password.as_deref().unwrap_or(""),
-                self.host.as_deref().unwrap_or("localhost"),
-                self.port.unwrap_or(5432),
-                self.database,
-                self.ssl_mode.as_deref().unwrap_or("prefer")
-            ),
-            "mysql" => format!(
-                "mysql://{}:{}@{}:{}/{}?ssl-mode={}",
-                self.username.as_deref().unwrap_or(""),
-                self.password.as_deref().unwrap_or(""),
-                self.host.as_deref().unwrap_or("localhost"),
-                self.port.unwrap_or(3306),
-                self.database,
-                self.ssl_mode.as_deref().unwrap_or("preferred")
-            ),
-            "sqlite" => format!(
-                "sqlite://{}",
-                self.file_path.as_deref().unwrap_or(&self.database)
-            ),
-            _ => String::new(),
-        }
+    pub fn to_sqlite_url(&self) -> String {
+        format!(
+            "sqlite://{}",
+            self.file_path.as_deref().unwrap_or(&self.database)
+        )
     }
 
-    pub fn to_url_via_tunnel(&self, local_port: u16) -> String {
-        match self.driver.as_str() {
-            "postgres" => format!(
-                "postgres://{}:{}@127.0.0.1:{}/{}?sslmode={}",
-                self.username.as_deref().unwrap_or(""),
-                self.password.as_deref().unwrap_or(""),
-                local_port,
-                self.database,
-                self.ssl_mode.as_deref().unwrap_or("prefer")
-            ),
-            "mysql" => format!(
-                "mysql://{}:{}@127.0.0.1:{}/{}?ssl-mode={}",
-                self.username.as_deref().unwrap_or(""),
-                self.password.as_deref().unwrap_or(""),
-                local_port,
-                self.database,
-                self.ssl_mode.as_deref().unwrap_or("preferred")
-            ),
-            _ => self.to_url(),
-        }
+    pub fn pg_options(&self, host: &str, port: u16) -> PgConnectOptions {
+        let ssl_mode = match self.ssl_mode.as_deref().unwrap_or("prefer") {
+            "disable" => PgSslMode::Disable,
+            "allow" => PgSslMode::Allow,
+            "require" => PgSslMode::Require,
+            "verify-ca" => PgSslMode::VerifyCa,
+            "verify-full" => PgSslMode::VerifyFull,
+            _ => PgSslMode::Prefer,
+        };
+        PgConnectOptions::new()
+            .host(host)
+            .port(port)
+            .database(&self.database)
+            .username(self.username.as_deref().unwrap_or(""))
+            .password(self.password.as_deref().unwrap_or(""))
+            .ssl_mode(ssl_mode)
     }
+
+    pub fn mysql_options(&self, host: &str, port: u16) -> MySqlConnectOptions {
+        let ssl_mode = match self.ssl_mode.as_deref().unwrap_or("preferred") {
+            "disabled" => MySqlSslMode::Disabled,
+            "required" => MySqlSslMode::Required,
+            "verify-ca" => MySqlSslMode::VerifyCa,
+            "verify-identity" => MySqlSslMode::VerifyIdentity,
+            _ => MySqlSslMode::Preferred,
+        };
+        MySqlConnectOptions::new()
+            .host(host)
+            .port(port)
+            .database(&self.database)
+            .username(self.username.as_deref().unwrap_or(""))
+            .password(self.password.as_deref().unwrap_or(""))
+            .ssl_mode(ssl_mode)
+    }
+}
+
+// ── Schema diagram types ──────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaColumn {
+    pub name: String,
+    pub col_type: String,
+    pub pk: bool,
+    pub nullable: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SchemaTable {
+    pub name: String,
+    pub columns: Vec<SchemaColumn>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaForeignKey {
+    pub name: String,
+    pub from_table: String,
+    pub from_col: String,
+    pub to_table: String,
+    pub to_col: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaGraph {
+    pub tables: Vec<SchemaTable>,
+    pub foreign_keys: Vec<SchemaForeignKey>,
 }
 
 // ── Query result ──────────────────────────────────────────────────────────────

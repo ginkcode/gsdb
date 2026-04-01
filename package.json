@@ -1,6 +1,6 @@
 {
   "name": "gsdb",
-  "version": "0.2.59",
+  "version": "0.3.0",
   "description": "A database management tool",
   "type": "module",
   "scripts": {
@@ -24,6 +24,7 @@
     "@tauri-apps/plugin-os": "^2.3.2",
     "@tauri-apps/plugin-store": "^2.4.2",
     "@tauri-apps/plugin-window-state": "^2.2.0",
+    "@xyflow/svelte": "^1.5.2",
     "codemirror": "^6.0.2",
     "sql-formatter": "^15.7.3",
     "tauri-plugin-keyring-api": "^0.1.1"

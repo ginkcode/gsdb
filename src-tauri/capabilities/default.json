@@ -16,6 +16,8 @@
     "keyring:default",
     "dialog:default",
     "fs:default",
+    "fs:allow-write-text-file",
+    "fs:allow-write-file",
     "os:default"
   ]
 }

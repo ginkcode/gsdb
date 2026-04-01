@@ -25,6 +25,7 @@
     postgres: "PG",
     mysql: "MY",
     sqlite: "SQ",
+    sqlserver: "MS",
   };
 
   function getLabelColor(conn: { driver: string; color?: string }): string {
@@ -91,6 +92,13 @@
             >
               {driverLabel[conn.driver]}
             </span>
+          {/if}
+          {#if tab.kind === "diagram"}
+            <svg class="w-3 h-3 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="5" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/>
+              <rect x="8" y="16" width="8" height="5" rx="1"/>
+              <path d="M6.5 8v3h11V8M12 11v5"/>
+            </svg>
           {/if}
           <span class={tab.temporary ? "italic" : ""}>{tab.title}</span>
           {#if tab.isLoading}

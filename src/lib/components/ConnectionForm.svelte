@@ -143,6 +143,7 @@
     postgres: 5432,
     mysql: 3306,
     sqlite: 0,
+    sqlserver: 1433,
   };
 
   // Reset form when dialog opens/closes or editing changes
@@ -292,11 +293,14 @@
               ? "PostgreSQL"
               : driver === "mysql"
                 ? "MySQL"
-                : "SQLite"}
+                : driver === "sqlserver"
+                  ? "SQL Server"
+                  : "SQLite"}
           </Select.Trigger>
           <Select.Content>
             <Select.Item value="postgres">PostgreSQL</Select.Item>
             <Select.Item value="mysql">MySQL</Select.Item>
+            <Select.Item value="sqlserver">SQL Server</Select.Item>
             <Select.Item value="sqlite">SQLite</Select.Item>
           </Select.Content>
         </Select.Root>

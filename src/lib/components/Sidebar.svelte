@@ -6,6 +6,7 @@
   import { toast } from "svelte-sonner";
   import { Plus, Database } from "@lucide/svelte";
   import { save, open } from "@tauri-apps/plugin-dialog";
+  import { downloadDir } from "@tauri-apps/api/path";
   import { Button } from "$lib/components/ui/button";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
   import {
@@ -17,6 +18,7 @@
     reconnectConnection,
     updateConnection,
     closeTabsByConnection,
+    openDiagramTab,
   } from "$lib/stores/connections";
   import type { Connection, TableInfo } from "$lib/types";
   import ConnectionItem from "./ConnectionItem.svelte";
@@ -24,6 +26,7 @@
   import ImportSqlDialog from "./ImportSqlDialog.svelte";
   import TableInfoDialog from "./TableInfoDialog.svelte";
   import ChangeDatabaseDialog from "./ChangeDatabaseDialog.svelte";
+  import DiagramPickerDialog from "./DiagramPickerDialog.svelte";
 
   let {
     onEditConnection,
@@ -88,6 +91,7 @@
     postgres: "PG",
     mysql: "MY",
     sqlite: "SQ",
+    sqlserver: "MS",
   };
 
   async function toggleConnection(connId: string) {
@@ -178,6 +182,15 @@
       await navigator.clipboard.writeText(tableInfoDefinition);
       toast.success("Copied");
     }
+  }
+
+  // Diagram picker dialog state
+  let diagramPickerOpen = $state(false);
+  let diagramPickerConnId = $state("");
+
+  function openDiagram(conn: Connection) {
+    diagramPickerConnId = conn.id;
+    diagramPickerOpen = true;
   }
 
   // Change database dialog state
@@ -273,8 +286,11 @@
   }
 
   async function exportDatabase(conn: Connection) {
+    const downloads = await downloadDir();
     const filePath = await save({
-      defaultPath: `${conn.name}_export.sql`,
+      defaultPath: downloads
+        ? `${downloads}/${conn.name}_export.sql`
+        : `${conn.name}_export.sql`,
       filters: [{ name: "SQL Files", extensions: ["sql"] }],
     });
     if (!filePath) return;
@@ -290,8 +306,11 @@
   }
 
   async function exportTable(connId: string, tableName: string) {
+    const downloads = await downloadDir();
     const filePath = await save({
-      defaultPath: `${tableName}_export.sql`,
+      defaultPath: downloads
+        ? `${downloads}/${tableName}_export.sql`
+        : `${tableName}_export.sql`,
       filters: [{ name: "SQL Files", extensions: ["sql"] }],
     });
     if (!filePath) return;
@@ -420,6 +439,7 @@
         onExport={() => exportDatabase(conn)}
         onImport={() => importSql(conn.id)}
         onChangeDatabase={() => openChangeDatabase(conn)}
+        onViewDiagram={() => openDiagram(conn)}
         onDelete={() => onDeleteConnection(conn)}
         onOpenTable={(table) =>
           openTableTab(conn.id, table, `SELECT * FROM ${table} LIMIT 100;`)}
@@ -450,6 +470,13 @@
       </button>
     {/if}
   </ScrollArea>
+
+  <!-- Diagram Picker Dialog -->
+  <DiagramPickerDialog
+    bind:open={diagramPickerOpen}
+    connectionId={diagramPickerConnId}
+    onConfirm={(tables) => openDiagramTab(diagramPickerConnId, tables)}
+  />
 
   <!-- Change Database Dialog -->
   <ChangeDatabaseDialog
@@ -493,7 +520,9 @@
   />
 
   {#if appVersion}
-    <div class="px-3 h-8 border-t border-border shrink-0 flex items-center justify-between gap-2">
+    <div
+      class="px-3 h-8 border-t border-border shrink-0 flex items-center justify-between gap-2"
+    >
       <p class="text-[10px] text-muted-foreground">v{appVersion}</p>
       {#if updateAvailable}
         <button

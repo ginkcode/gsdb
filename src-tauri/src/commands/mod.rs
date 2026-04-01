@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use tauri::State;
 use tokio::sync::Mutex;
 
-use crate::db::{Connection, DbPool, QueryResult, TableInfo};
+use crate::db::{Connection, DbPool, QueryResult, SchemaGraph, TableInfo};
 
 #[derive(serde::Serialize)]
 pub struct FilePreview {
@@ -208,6 +208,22 @@ pub async fn import_sql(
         .await
         .map_err(|e| e.to_string())?;
     Ok(format!("{} statement(s) executed", count))
+}
+
+#[tauri::command]
+pub async fn get_schema(
+    connection_id: String,
+    state: State<'_, AppState>,
+) -> Result<SchemaGraph, String> {
+    let pool = {
+        let pools = state.pools.lock().await;
+        pools
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+            .clone()
+    };
+
+    pool.get_schema().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]

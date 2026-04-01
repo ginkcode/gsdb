@@ -4,6 +4,7 @@
   import * as ResizablePrimitive from "$lib/components/ui/resizable";
   import SqlEditor from "$lib/components/SqlEditor.svelte";
   import ResultTable from "$lib/components/ResultTable.svelte";
+  import DiagramView from "$lib/components/DiagramView.svelte";
   import {
     queryTabs,
     activeTabId,
@@ -35,6 +36,16 @@
 
 {#if $activeTab}
   {@const tab = $activeTab}
+  {#if tab.kind === "diagram"}
+    {#key tab.id}
+      <DiagramView
+        tabId={tab.id}
+        connectionId={tab.connectionId}
+        selectedTables={tab.selectedTables ?? []}
+        nodePositions={tab.nodePositions ?? {}}
+      />
+    {/key}
+  {:else}
   <ResizablePrimitive.PaneGroup direction="vertical" class="flex-1">
     <ResizablePrimitive.Pane defaultSize={40} minSize={20}>
       <div class="h-full flex flex-col bg-muted">
@@ -100,6 +111,7 @@
       </div>
     </ResizablePrimitive.Pane>
   </ResizablePrimitive.PaneGroup>
+  {/if}
 {:else}
   <div
     class="h-full flex flex-col items-center justify-center gap-3 text-muted-foreground"

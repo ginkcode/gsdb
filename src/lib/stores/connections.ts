@@ -424,3 +424,41 @@ export function makeTabPermanent(tabId: string) {
     tabs.map((t) => (t.id === tabId ? { ...t, temporary: false } : t))
   );
 }
+
+export function openDiagramTab(
+  connectionId: string,
+  selectedTables: string[]
+): QueryTab {
+  activeConnectionId.set(connectionId);
+
+  let tabs: QueryTab[] = [];
+  queryTabs.subscribe((t) => { tabs = t; })();
+
+  // Reuse existing diagram tab for this connection if one exists
+  const existing = tabs.find(
+    (t) => t.connectionId === connectionId && t.kind === "diagram"
+  );
+  if (existing) {
+    queryTabs.update((ts) =>
+      ts.map((t) =>
+        t.id === existing.id ? { ...t, selectedTables } : t
+      )
+    );
+    activeTabId.set(existing.id);
+    return { ...existing, selectedTables };
+  }
+
+  const tab: QueryTab = {
+    id: crypto.randomUUID(),
+    connectionId,
+    title: "Diagram",
+    kind: "diagram",
+    sql: "",
+    isLoading: false,
+    selectedTables,
+    nodePositions: {},
+  };
+  queryTabs.update((ts) => [...ts, tab]);
+  activeTabId.set(tab.id);
+  return tab;
+}

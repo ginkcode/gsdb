@@ -1,8 +1,30 @@
 @import "tailwindcss";
+@import "@xyflow/svelte/dist/style.css";
 @import "tw-animate-css";
 @import "@fontsource-variable/inter";
 
 @source "../";
+
+/* SvelteFlow (xyflow) overrides */
+.svelte-flow__attribution {
+  display: none;
+}
+.svelte-flow__controls-button {
+  background: #fff;
+  border-color: #e5e7eb;
+  color: #374151;
+}
+.svelte-flow__controls-button:hover {
+  background: #e5e7eb;
+  color: #111827;
+}
+.svelte-flow__minimap {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.svelte-flow__minimap:hover {
+  opacity: 0.8;
+}
 
 /* CodeMirror overrides */
 .cm-editor {

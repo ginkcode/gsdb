@@ -1,4 +1,29 @@
-export type DbDriver = "postgres" | "mysql" | "sqlite";
+export type DbDriver = "postgres" | "mysql" | "sqlite" | "sqlserver";
+
+export interface SchemaColumn {
+  name: string;
+  colType: string;
+  pk: boolean;
+  nullable: boolean;
+}
+
+export interface SchemaTable {
+  name: string;
+  columns: SchemaColumn[];
+}
+
+export interface SchemaForeignKey {
+  name: string;
+  fromTable: string;
+  fromCol: string;
+  toTable: string;
+  toCol: string;
+}
+
+export interface SchemaGraph {
+  tables: SchemaTable[];
+  foreignKeys: SchemaForeignKey[];
+}
 
 export interface SshTunnel {
   host: string;
@@ -42,8 +67,12 @@ export interface QueryTab {
   id: string;
   connectionId: string;
   title: string;
+  kind?: "query" | "diagram"; // defaults to "query" when absent
   sql: string;
   result?: QueryResult;
   isLoading: boolean;
   temporary?: boolean; // preview tab opened by single click; replaced on next single click
+  // diagram-only
+  selectedTables?: string[];
+  nodePositions?: Record<string, { x: number; y: number }>;
 }

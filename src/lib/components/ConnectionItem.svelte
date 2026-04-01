@@ -12,6 +12,7 @@
     ChevronRight,
     Loader,
     Database,
+    Network,
   } from "@lucide/svelte";
   import type { Connection, TableInfo } from "$lib/types";
   import TableItem from "./TableItem.svelte";
@@ -32,6 +33,7 @@
     postgres: "PG",
     mysql: "MY",
     sqlite: "SQ",
+    sqlserver: "MS",
   };
 
   interface Props {
@@ -51,6 +53,7 @@
     onImport: () => void;
     onChangeDatabase: () => void;
     onDelete: () => void;
+    onViewDiagram: () => void;
     onOpenTable: (tableName: string) => void;
     onPreviewTable: (tableName: string) => void;
     onShowTableInfo: (tableName: string) => void;
@@ -78,6 +81,7 @@
     onImport,
     onChangeDatabase,
     onDelete,
+    onViewDiagram,
     onOpenTable,
     onPreviewTable,
     onShowTableInfo,
@@ -142,6 +146,9 @@
       <Database class="w-4 h-4" /><span>Change Database</span>
     </Item>
   {/if}
+  <Item class="flex items-center gap-2 cursor-pointer" onclick={onViewDiagram}>
+    <Network class="w-4 h-4" /><span>View Diagram</span>
+  </Item>
   <Item class="flex items-center gap-2 cursor-pointer" onclick={onExport}>
     <Download class="w-4 h-4" /><span>Export Database</span>
   </Item>
