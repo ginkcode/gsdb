@@ -71,17 +71,7 @@ jobs:
             src-tauri/target/release/bundle/rpm/*.rpm
 
   build-macos:
-    strategy:
-      matrix:
-        include:
-          - runner: macos-14
-            arch: x86_64
-            target: x86_64-apple-darwin
-          - runner: macos-14
-            arch: aarch64
-            target: aarch64-apple-darwin
-
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14
 
     steps:
       - uses: actions/checkout@v5
@@ -95,7 +85,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -106,13 +96,13 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npx tauri build --bundles dmg --target ${{ matrix.target }}
+        run: npx tauri build --bundles app,dmg --target universal-apple-darwin
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: GSDB-macos-${{ matrix.arch }}
-          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          name: GSDB-macos-universal
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
 
   build-windows:
     runs-on: windows-latest
