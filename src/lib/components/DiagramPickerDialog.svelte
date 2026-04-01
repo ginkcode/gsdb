@@ -9,10 +9,12 @@
   let {
     open = $bindable(false),
     connectionId,
+    initialSelected = [],
     onConfirm,
   }: {
     open: boolean;
     connectionId: string;
+    initialSelected?: string[];
     onConfirm: (selectedTables: string[]) => void;
   } = $props();
 
@@ -24,13 +26,18 @@
 
   // Load schema when dialog opens
   $effect(() => {
-    if (open && !schema) {
+    if (open) {
       loading = true;
       error = null;
       invoke<SchemaGraph>("get_schema", { connectionId })
         .then((g) => {
           schema = g;
-          selected = new Set(g.tables.map((t) => t.name));
+          // Use initialSelected if provided, otherwise select all
+          if (initialSelected.length > 0) {
+            selected = new Set(initialSelected);
+          } else {
+            selected = new Set(g.tables.map((t) => t.name));
+          }
         })
         .catch((e) => { error = String(e); })
         .finally(() => { loading = false; });
@@ -70,7 +77,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="sm:max-w-md">
+  <Dialog.Content class="sm:max-w-lg">
     <Dialog.Header>
       <Dialog.Title>Select tables for diagram</Dialog.Title>
       <Dialog.Description>
@@ -102,7 +109,7 @@
           </div>
         </div>
 
-        <ScrollArea class="h-64 rounded border border-border">
+        <ScrollArea class="h-80 rounded border border-border">
           <div class="p-1">
             {#each filtered as table}
               <label
@@ -114,8 +121,8 @@
                   onchange={() => toggle(table.name)}
                   class="accent-primary w-3.5 h-3.5 shrink-0"
                 />
-                <span class="truncate">{table.name}</span>
-                <span class="ml-auto text-xs text-muted-foreground shrink-0">
+                <span class="truncate flex-1 min-w-0" title={table.name}>{table.name}</span>
+                <span class="text-xs text-muted-foreground shrink-0 whitespace-nowrap">
                   {table.columns.length} cols
                 </span>
               </label>

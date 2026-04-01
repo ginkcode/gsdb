@@ -86,6 +86,14 @@
     }
   });
 
+  // Update nodes/edges when selectedTables changes
+  $effect(() => {
+    if (schema && selectedTables) {
+      nodes = buildNodes(schema, selectedTables);
+      edges = buildEdges(schema, selectedTables);
+    }
+  });
+
   // Export helpers
   const PAD = 40;
   const NODE_W = 240;

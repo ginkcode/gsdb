@@ -12,6 +12,8 @@
   import {
     connections,
     activeConnectionId,
+    activeTabId,
+    queryTabs,
     addTab,
     openTableTab,
     openTableTabPreview,
@@ -20,7 +22,7 @@
     closeTabsByConnection,
     openDiagramTab,
   } from "$lib/stores/connections";
-  import type { Connection, TableInfo } from "$lib/types";
+  import type { Connection, TableInfo, QueryTab } from "$lib/types";
   import ConnectionItem from "./ConnectionItem.svelte";
   import TableActionDialog from "./TableActionDialog.svelte";
   import ImportSqlDialog from "./ImportSqlDialog.svelte";
@@ -187,8 +189,19 @@
   // Diagram picker dialog state
   let diagramPickerOpen = $state(false);
   let diagramPickerConnId = $state("");
+  let diagramPickerInitialTables = $state<string[]>([]);
 
   function openDiagram(conn: Connection) {
+    // Check if a diagram tab already exists for this connection
+    let existingDiagramTab: QueryTab | undefined;
+    queryTabs.subscribe((tabs) => {
+      existingDiagramTab = tabs.find(
+        (t) => t.connectionId === conn.id && t.kind === "diagram"
+      );
+    })();
+
+    // Pass the currently selected tables (if any) to the picker dialog
+    diagramPickerInitialTables = existingDiagramTab?.selectedTables ?? [];
     diagramPickerConnId = conn.id;
     diagramPickerOpen = true;
   }
@@ -475,6 +488,7 @@
   <DiagramPickerDialog
     bind:open={diagramPickerOpen}
     connectionId={diagramPickerConnId}
+    initialSelected={diagramPickerInitialTables}
     onConfirm={(tables) => openDiagramTab(diagramPickerConnId, tables)}
   />
 
