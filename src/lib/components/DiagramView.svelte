@@ -63,7 +63,9 @@
       .map((fk) => ({
         id: fk.name,
         source: fk.fromTable,
+        sourceHandle: `${fk.fromTable}-${fk.fromCol}-right`,
         target: fk.toTable,
+        targetHandle: `${fk.toTable}-${fk.toCol}-left`,
         type: "smoothstep",
         style: "stroke-width: 1.5;",
       }));
@@ -132,14 +134,41 @@
       const src = nodes.find((n) => n.id === edge.source);
       const tgt = nodes.find((n) => n.id === edge.target);
       if (!src || !tgt) continue;
-      const srcH =
-        HEADER_H + (src.data.table as SchemaTable).columns.length * ROW_H;
-      const tgtH =
-        HEADER_H + (tgt.data.table as SchemaTable).columns.length * ROW_H;
+
+      // Find column positions for the foreign key relationship
+      const srcTable = src.data.table as SchemaTable;
+      const tgtTable = tgt.data.table as SchemaTable;
+
+      // Get column names from handle IDs (format: "tableName-colName-side")
+      const srcColName =
+        edge.sourceHandle?.split("-").slice(1, -1).join("-") || "";
+      const tgtColName =
+        edge.targetHandle?.split("-").slice(1, -1).join("-") || "";
+
+      // Find column indices
+      const srcColIndex = srcTable.columns.findIndex(
+        (c) => c.name === srcColName,
+      );
+      const tgtColIndex = tgtTable.columns.findIndex(
+        (c) => c.name === tgtColName,
+      );
+
+      // Calculate Y positions based on column indices
+      const srcY =
+        src.position.y +
+        HEADER_H +
+        (srcColIndex >= 0 ? srcColIndex + 0.5 : srcTable.columns.length / 2) *
+          ROW_H;
+      const tgtY =
+        tgt.position.y +
+        HEADER_H +
+        (tgtColIndex >= 0 ? tgtColIndex + 0.5 : tgtTable.columns.length / 2) *
+          ROW_H;
+
       const x1 = src.position.x + NODE_W + ox;
-      const y1 = src.position.y + srcH / 2 + oy;
+      const y1 = srcY + oy;
       const x2 = tgt.position.x + ox;
-      const y2 = tgt.position.y + tgtH / 2 + oy;
+      const y2 = tgtY + oy;
 
       // Draw stepped line with rounded corners using bezier curves
       const midX = (x1 + x2) / 2;
