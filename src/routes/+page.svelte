@@ -119,6 +119,20 @@
         connectionId: tab.connectionId,
         sql,
       });
+      // Enrich column nullability from schema when the tab is a table view
+      if (tab.title !== "Query" && result.columns.length > 0) {
+        try {
+          const nullableMap: Record<string, boolean> = await invoke(
+            "get_column_nullable",
+            { connectionId: tab.connectionId, tableName: tab.title },
+          );
+          result.columnNullable = result.columns.map(
+            (col) => nullableMap[col] ?? true,
+          );
+        } catch {
+          // schema lookup failed — leave as default (all nullable)
+        }
+      }
       updateTab(tabId, { result, isLoading: false });
     } catch (err) {
       updateTab(tabId, {
@@ -173,6 +187,7 @@
 
   let columns = $derived($activeTab?.result?.columns ?? []);
   let columnTypes = $derived($activeTab?.result?.columnTypes ?? []);
+  let columnNullable = $derived($activeTab?.result?.columnNullable ?? []);
 </script>
 
 <!-- Theme-aware root -->
@@ -234,6 +249,7 @@
                 row={selectedRow}
                 {columns}
                 {columnTypes}
+                {columnNullable}
                 connectionId={$activeTab?.connectionId}
                 tableName={$activeTab?.title !== "Query"
                   ? $activeTab?.title

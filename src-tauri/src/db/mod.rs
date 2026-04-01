@@ -164,6 +164,79 @@ impl DbPool {
         }
     }
 
+    /// Returns a map of column_name → is_nullable for a given table.
+    /// Used to enrich QueryResult.column_nullable on the frontend.
+    pub async fn get_column_nullable(
+        &self,
+        table_name: &str,
+    ) -> Result<std::collections::HashMap<String, bool>, sqlx::Error> {
+        match self {
+            DbPool::Postgres(pool) => {
+                let rows = sqlx::query(
+                    "SELECT column_name, is_nullable \
+                     FROM information_schema.columns \
+                     WHERE table_schema = 'public' AND table_name = $1",
+                )
+                .bind(table_name)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows
+                    .iter()
+                    .filter_map(|r| {
+                        let col: String = r.try_get(0).ok()?;
+                        let nullable: String = r.try_get(1).ok()?;
+                        Some((col, nullable == "YES"))
+                    })
+                    .collect())
+            }
+            DbPool::Mysql(pool) => {
+                let rows = sqlx::query(
+                    "SELECT COLUMN_NAME, IS_NULLABLE \
+                     FROM information_schema.COLUMNS \
+                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+                )
+                .bind(table_name)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows
+                    .iter()
+                    .filter_map(|r| {
+                        let col = r
+                            .try_get::<String, _>(0)
+                            .or_else(|_| {
+                                r.try_get::<Vec<u8>, _>(0)
+                                    .map(|b| String::from_utf8_lossy(&b).into_owned())
+                            })
+                            .ok()?;
+                        let nullable = r
+                            .try_get::<String, _>(1)
+                            .or_else(|_| {
+                                r.try_get::<Vec<u8>, _>(1)
+                                    .map(|b| String::from_utf8_lossy(&b).into_owned())
+                            })
+                            .ok()?;
+                        Some((col, nullable == "YES"))
+                    })
+                    .collect())
+            }
+            DbPool::Sqlite(pool) => {
+                let rows =
+                    sqlx::query(&format!("PRAGMA table_info(\"{}\")", table_name))
+                        .fetch_all(pool)
+                        .await?;
+                // PRAGMA table_info columns: cid, name, type, notnull, dflt_value, pk
+                Ok(rows
+                    .iter()
+                    .filter_map(|r| {
+                        let col: String = r.try_get(1).ok()?;
+                        let not_null: i64 = r.try_get(3).ok()?;
+                        Some((col, not_null == 0))
+                    })
+                    .collect())
+            }
+        }
+    }
+
     pub async fn create_database(&self, db_name: &str) -> Result<(), sqlx::Error> {
         // Validate name to prevent SQL injection (only allow alphanumeric, underscore, hyphen)
         if !db_name

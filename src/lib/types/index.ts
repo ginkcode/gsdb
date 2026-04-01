@@ -32,6 +32,7 @@ export interface TableInfo {
 export interface QueryResult {
   columns: string[];
   columnTypes?: string[];
+  columnNullable?: boolean[];
   rows: Record<string, unknown>[];
   rowsAffected?: number;
   error?: string;

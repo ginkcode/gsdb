@@ -102,6 +102,9 @@ impl Connection {
 pub struct QueryResult {
     pub columns: Vec<String>,
     pub column_types: Vec<String>,
+    /// Per-column nullability. `true` = nullable, `false` = NOT NULL.
+    /// Defaults to `true` when the information is not available (e.g. ad-hoc queries).
+    pub column_nullable: Vec<bool>,
     pub rows: Vec<HashMap<String, Value>>,
     pub rows_affected: Option<u64>,
 }

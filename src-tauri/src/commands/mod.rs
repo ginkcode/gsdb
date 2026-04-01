@@ -246,3 +246,22 @@ pub async fn get_table_definition(
         .await
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn get_column_nullable(
+    connection_id: String,
+    table_name: String,
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, bool>, String> {
+    let pool = {
+        let pools = state.pools.lock().await;
+        pools
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+            .clone()
+    };
+
+    pool.get_column_nullable(&table_name)
+        .await
+        .map_err(|e| e.to_string())
+}

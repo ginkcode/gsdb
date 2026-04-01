@@ -9,6 +9,7 @@ pub async fn pg_query(pool: &sqlx::PgPool, sql: &str) -> Result<QueryResult, sql
         return Ok(QueryResult {
             columns: vec![],
             column_types: vec![],
+            column_nullable: vec![],
             rows: vec![],
             rows_affected: Some(0),
         });
@@ -23,6 +24,9 @@ pub async fn pg_query(pool: &sqlx::PgPool, sql: &str) -> Result<QueryResult, sql
         .iter()
         .map(|c| c.type_info().name().to_lowercase())
         .collect();
+    // sqlx does not expose nullability via the public Column trait;
+    // default to true (nullable) — callers can override via schema queries.
+    let column_nullable: Vec<bool> = vec![true; columns.len()];
     let result_rows = rows
         .iter()
         .map(|row| {
@@ -36,6 +40,7 @@ pub async fn pg_query(pool: &sqlx::PgPool, sql: &str) -> Result<QueryResult, sql
     Ok(QueryResult {
         columns,
         column_types,
+        column_nullable,
         rows: result_rows,
         rows_affected: None,
     })

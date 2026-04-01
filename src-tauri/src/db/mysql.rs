@@ -9,6 +9,7 @@ pub async fn mysql_query(pool: &sqlx::MySqlPool, sql: &str) -> Result<QueryResul
         return Ok(QueryResult {
             columns: vec![],
             column_types: vec![],
+            column_nullable: vec![],
             rows: vec![],
             rows_affected: Some(0),
         });
@@ -23,6 +24,7 @@ pub async fn mysql_query(pool: &sqlx::MySqlPool, sql: &str) -> Result<QueryResul
         .iter()
         .map(|c| c.type_info().name().to_lowercase())
         .collect();
+    let column_nullable: Vec<bool> = vec![true; columns.len()];
     let result_rows = rows
         .iter()
         .map(|row| {
@@ -36,6 +38,7 @@ pub async fn mysql_query(pool: &sqlx::MySqlPool, sql: &str) -> Result<QueryResul
     Ok(QueryResult {
         columns,
         column_types,
+        column_nullable,
         rows: result_rows,
         rows_affected: None,
     })

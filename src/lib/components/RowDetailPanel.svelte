@@ -10,6 +10,7 @@
     row,
     columns,
     columnTypes = [],
+    columnNullable = [],
     connectionId,
     tableName,
     onClose,
@@ -18,6 +19,7 @@
     row: Record<string, unknown> | null;
     columns: string[];
     columnTypes?: string[];
+    columnNullable?: boolean[];
     connectionId?: string;
     tableName?: string;
     onClose: () => void;
@@ -213,6 +215,7 @@
           {@const changed = isChanged(col)}
           {@const error = fieldErrors[col]}
           {@const isNull = nullFields[col] ?? false}
+          {@const nullable = columnNullable.length > 0 ? (columnNullable[colIdx] ?? true) : true}
           {@const multiline = !isNull && isMultiline(value)}
           {@const inputClass = `w-full text-sm font-mono bg-muted/50 rounded px-3 py-2 outline-none transition-colors border focus:border-border ${error ? 'border-destructive/70' : changed ? 'border-amber-500/60' : 'border-transparent'}`}
 
@@ -230,6 +233,14 @@
                 <span class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                   {valueType}
                 </span>
+                {#if nullable && !isNull}
+                  <button
+                    type="button"
+                    class="text-[10px] px-1.5 py-0.5 rounded border border-dashed border-muted-foreground/40 text-muted-foreground hover:border-destructive/60 hover:text-destructive transition-colors"
+                    onclick={() => setNull(col)}
+                    title="Set to NULL"
+                  >NULL</button>
+                {/if}
                 <Button
                   variant="ghost"
                   size="icon"
