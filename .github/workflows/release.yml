@@ -59,13 +59,16 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run tauri:build -- --bundles appimage
+        run: npm run tauri:build -- --bundles appimage,deb,rpm
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: GSDB-linux-${{ matrix.arch }}
-          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
 
   build-macos:
     strategy:
@@ -169,6 +172,8 @@ jobs:
         with:
           files: |
             artifacts/**/*.AppImage
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
             artifacts/**/*.dmg
             artifacts/**/*.exe
           generate_release_notes: false
