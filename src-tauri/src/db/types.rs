@@ -47,8 +47,9 @@ pub struct Connection {
 
 impl Connection {
     pub fn to_sqlite_url(&self) -> String {
+        // Use rwc mode (read-write-create) to create the database if it doesn't exist
         format!(
-            "sqlite://{}",
+            "sqlite://{}?mode=rwc",
             self.file_path.as_deref().unwrap_or(&self.database)
         )
     }

@@ -81,11 +81,24 @@ impl DbPool {
                         .map_err(DbError::Sqlx)?,
                 ))
             }
-            "sqlite" => Arc::new(SqliteDriver(
-                sqlx::SqlitePool::connect(&conn.to_sqlite_url())
-                    .await
-                    .map_err(DbError::Sqlx)?,
-            )),
+            "sqlite" => {
+                // Validate that parent directory exists for SQLite file
+                let db_path = conn.file_path.as_deref().unwrap_or(&conn.database);
+                let parent_dir = std::path::Path::new(db_path)
+                    .parent()
+                    .ok_or_else(|| DbError::Config("Invalid SQLite file path".into()))?;
+                if !parent_dir.exists() {
+                    return Err(DbError::Config(format!(
+                        "Parent directory does not exist: {}",
+                        parent_dir.display()
+                    )));
+                }
+                Arc::new(SqliteDriver(
+                    sqlx::SqlitePool::connect(&conn.to_sqlite_url())
+                        .await
+                        .map_err(DbError::Sqlx)?,
+                ))
+            }
             "sqlserver" => {
                 let host = if tunnel_port.is_some() {
                     "localhost"
