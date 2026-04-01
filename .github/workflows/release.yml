@@ -199,9 +199,25 @@ jobs:
           sudo apt-get install -y reprepro createrepo-c gnupg
 
       - name: Import GPG signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
         run: |
-          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
-          gpg --list-secret-keys
+          # Configure gpg for non-interactive use
+          mkdir -p ~/.gnupg
+          chmod 700 ~/.gnupg
+          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
+          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+          gpg-connect-agent reloadagent /bye
+
+          # Import the key
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+
+          # Pre-cache passphrase in gpg-agent
+          echo "$GPG_PASSPHRASE" | gpg --batch --pinentry-mode loopback \
+            --passphrase-fd 0 --armor --detach-sign --default-key "$GPG_KEY_ID" \
+            --output /dev/null /dev/null 2>/dev/null || true
 
       - name: Checkout ginkcode.github.io repo
         uses: actions/checkout@v5
@@ -211,25 +227,22 @@ jobs:
           path: repo
 
       - name: Build apt repository
+        env:
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
         run: |
           mkdir -p repo/gsdb/apt/conf
-          cat > repo/gsdb/apt/conf/distributions << EOF
-          Origin: GSDB
-          Label: GSDB
-          Codename: stable
-          Architectures: amd64 arm64
-          Components: main
-          Description: GSDB - Database Management Tool
-          SignWith: ${{ secrets.GPG_KEY_ID }}
-          EOF
-
-          cat > repo/gsdb/apt/conf/options << EOF
-          ask-passphrase
-          EOF
+          {
+            echo "Origin: GSDB"
+            echo "Label: GSDB"
+            echo "Codename: stable"
+            echo "Architectures: amd64 arm64"
+            echo "Components: main"
+            echo "Description: GSDB - Database Management Tool"
+            echo "SignWith: $GPG_KEY_ID"
+          } > repo/gsdb/apt/conf/distributions
 
           find artifacts -name "*.deb" | while read deb; do
-            reprepro -b repo/gsdb/apt --ask-passphrase includedeb stable "$deb" || \
-            reprepro -b repo/gsdb/apt includedeb stable "$deb" || true
+            reprepro -b repo/gsdb/apt includedeb stable "$deb"
           done
 
       - name: Build RPM repository
