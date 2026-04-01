@@ -1685,7 +1685,7 @@ dependencies = [
 
 [[package]]
 name = "gsdb"
-version = "0.2.58"
+version = "0.2.59"
 dependencies = [
  "bigdecimal",
  "chrono",
