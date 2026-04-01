@@ -131,15 +131,22 @@ impl Driver for SqliteDriver {
 
     async fn get_table_definition(&self, table_name: &str) -> Result<String, DbError> {
         let rows = sqlx::query(
-            "SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name=?",
+            "SELECT type, sql FROM sqlite_master WHERE type IN ('table', 'view') AND name=?",
         )
         .bind(table_name)
         .fetch_all(&self.0)
         .await?;
         if let Some(row) = rows.first() {
-            let create_stmt: String = row.try_get(0)?;
+            let obj_type: String = row.try_get(0)?;
+            let create_stmt: String = row.try_get(1)?;
+            let header = if obj_type == "view" {
+                "-- View Definition"
+            } else {
+                "-- Table Definition"
+            };
             Ok(format!(
-                "-- Table Definition\n{};",
+                "{}\n{};",
+                header,
                 create_stmt.trim_end_matches(';')
             ))
         } else {
