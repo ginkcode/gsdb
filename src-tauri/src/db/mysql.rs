@@ -5,7 +5,9 @@ use serde_json::Value;
 use sqlx::{Column, Row, TypeInfo};
 
 use super::driver::{DbError, Dialect, Driver};
-use super::types::{QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo};
+use super::types::{
+    QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo,
+};
 
 pub struct MySqlDriver(pub sqlx::MySqlPool);
 
@@ -45,11 +47,10 @@ impl Driver for MySqlDriver {
     }
 
     async fn list_databases(&self) -> Result<Vec<String>, DbError> {
-        let rows = sqlx::query(
-            "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME",
-        )
-        .fetch_all(&self.0)
-        .await?;
+        let rows =
+            sqlx::query("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME")
+                .fetch_all(&self.0)
+                .await?;
         Ok(rows
             .iter()
             .map(|r| {
@@ -133,7 +134,10 @@ impl Driver for MySqlDriver {
             if tables.last().map(|t: &SchemaTable| t.name.as_str()) == Some(tbl.as_str()) {
                 tables.last_mut().unwrap().columns.push(col);
             } else {
-                tables.push(SchemaTable { name: tbl, columns: vec![col] });
+                tables.push(SchemaTable {
+                    name: tbl,
+                    columns: vec![col],
+                });
             }
         }
 
@@ -158,24 +162,66 @@ impl Driver for MySqlDriver {
             })
             .collect();
 
-        Ok(SchemaGraph { tables, foreign_keys })
+        Ok(SchemaGraph {
+            tables,
+            foreign_keys,
+        })
     }
 
     async fn get_table_definition(&self, table_name: &str) -> Result<String, DbError> {
-        let rows = sqlx::query(&format!(
-            "SHOW CREATE TABLE `{}`",
-            table_name.replace('`', "``")
-        ))
-        .fetch_all(&self.0)
+        // First check if this is a view
+        let view_row = sqlx::query(
+            "SELECT TABLE_TYPE FROM information_schema.TABLES \
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+        )
+        .bind(table_name)
+        .fetch_optional(&self.0)
         .await?;
-        if let Some(row) = rows.first() {
-            let create_stmt: String = row.try_get(1)?;
-            Ok(format!(
-                "-- Table Definition\n{};",
-                create_stmt.trim_end_matches(';')
+
+        let is_view = view_row
+            .as_ref()
+            .map(|r| {
+                r.try_get::<String, _>(1).unwrap_or_default() == "VIEW"
+                    || r.try_get::<Vec<u8>, _>(1)
+                        .map(|b| String::from_utf8_lossy(&b).into_owned() == "VIEW")
+                        .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
+        if is_view {
+            // Use SHOW CREATE VIEW for views
+            let rows = sqlx::query(&format!(
+                "SHOW CREATE VIEW `{}`",
+                table_name.replace('`', "``")
             ))
+            .fetch_all(&self.0)
+            .await?;
+            if let Some(row) = rows.first() {
+                let create_stmt: String = row.try_get(1)?;
+                Ok(format!(
+                    "-- View Definition\n{};",
+                    create_stmt.trim_end_matches(';')
+                ))
+            } else {
+                Err(DbError::Sqlx(sqlx::Error::RowNotFound))
+            }
         } else {
-            Err(DbError::Sqlx(sqlx::Error::RowNotFound))
+            // Use SHOW CREATE TABLE for tables
+            let rows = sqlx::query(&format!(
+                "SHOW CREATE TABLE `{}`",
+                table_name.replace('`', "``")
+            ))
+            .fetch_all(&self.0)
+            .await?;
+            if let Some(row) = rows.first() {
+                let create_stmt: String = row.try_get(1)?;
+                Ok(format!(
+                    "-- Table Definition\n{};",
+                    create_stmt.trim_end_matches(';')
+                ))
+            } else {
+                Err(DbError::Sqlx(sqlx::Error::RowNotFound))
+            }
         }
     }
 }

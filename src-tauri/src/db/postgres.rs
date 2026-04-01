@@ -5,7 +5,9 @@ use serde_json::Value;
 use sqlx::{Column, Row, TypeInfo};
 
 use super::driver::{DbError, Dialect, Driver};
-use super::types::{QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo};
+use super::types::{
+    QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo,
+};
 
 pub struct PostgresDriver(pub sqlx::PgPool);
 
@@ -114,7 +116,10 @@ impl Driver for PostgresDriver {
             if tables.last().map(|t: &SchemaTable| t.name.as_str()) == Some(tbl.as_str()) {
                 tables.last_mut().unwrap().columns.push(col);
             } else {
-                tables.push(SchemaTable { name: tbl, columns: vec![col] });
+                tables.push(SchemaTable {
+                    name: tbl,
+                    columns: vec![col],
+                });
             }
         }
 
@@ -145,10 +150,34 @@ impl Driver for PostgresDriver {
             })
             .collect();
 
-        Ok(SchemaGraph { tables, foreign_keys })
+        Ok(SchemaGraph {
+            tables,
+            foreign_keys,
+        })
     }
 
     async fn get_table_definition(&self, table_name: &str) -> Result<String, DbError> {
+        // First check if this is a view
+        let view_row = sqlx::query(
+            "SELECT definition FROM pg_views \
+             WHERE schemaname = 'public' AND viewname = $1",
+        )
+        .bind(table_name)
+        .fetch_optional(&self.0)
+        .await?;
+
+        if let Some(row) = view_row {
+            let definition: String = row.try_get(0)?;
+            // pg_views.definition returns the SELECT part without CREATE VIEW
+            // Trim any trailing semicolon from the definition
+            let def = definition.trim().trim_end_matches(';');
+            return Ok(format!(
+                "-- View Definition\nCREATE OR REPLACE VIEW \"public\".\"{}\" AS\n{};",
+                table_name, def
+            ));
+        }
+
+        // Not a view, treat as table
         let rows = sqlx::query(
             "SELECT column_name, udt_name, is_nullable, column_default, \
              character_maximum_length, numeric_precision, numeric_scale \
@@ -360,8 +389,7 @@ pub fn pg_value(row: &sqlx::postgres::PgRow, idx: usize) -> Value {
         type_name.as_str(),
         "oid" | "xid" | "cid" | "regproc" | "regclass" | "regtype"
     ) {
-        if let Ok(sqlx::postgres::types::Oid(v)) =
-            row.try_get::<sqlx::postgres::types::Oid, _>(idx)
+        if let Ok(sqlx::postgres::types::Oid(v)) = row.try_get::<sqlx::postgres::types::Oid, _>(idx)
         {
             return Value::Number(u64::from(v).into());
         }
