@@ -221,8 +221,8 @@ jobs:
 
       - name: Build apt repository
         run: |
-          mkdir -p repo/apt/conf
-          cat > repo/apt/conf/distributions << EOF
+          mkdir -p repo/gsdb/apt/conf
+          cat > repo/gsdb/apt/conf/distributions << EOF
           Origin: GSDB
           Label: GSDB
           Codename: stable
@@ -232,32 +232,32 @@ jobs:
           SignWith: ${{ secrets.GPG_KEY_ID }}
           EOF
 
-          cat > repo/apt/conf/options << EOF
+          cat > repo/gsdb/apt/conf/options << EOF
           ask-passphrase
           EOF
 
           find artifacts -name "*.deb" | while read deb; do
-            reprepro -b repo/apt --ask-passphrase includedeb stable "$deb" || \
-            reprepro -b repo/apt includedeb stable "$deb" || true
+            reprepro -b repo/gsdb/apt --ask-passphrase includedeb stable "$deb" || \
+            reprepro -b repo/gsdb/apt includedeb stable "$deb" || true
           done
 
       - name: Build RPM repository
         run: |
-          mkdir -p repo/rpm
-          find artifacts -name "*.rpm" -exec cp -n {} repo/rpm/ \;
-          createrepo_c repo/rpm/
+          mkdir -p repo/gsdb/rpm
+          find artifacts -name "*.rpm" -exec cp -n {} repo/gsdb/rpm/ \;
+          createrepo_c repo/gsdb/rpm/
           gpg --batch --detach-sign --armor \
             --default-key "${{ secrets.GPG_KEY_ID }}" \
-            repo/rpm/repodata/repomd.xml || true
+            repo/gsdb/rpm/repodata/repomd.xml || true
 
       - name: Export GPG public key
         run: |
-          gpg --armor --export "${{ secrets.GPG_KEY_ID }}" > repo/gpg.key
+          gpg --armor --export "${{ secrets.GPG_KEY_ID }}" > repo/gsdb/gpg.key
 
       - name: Create install instructions
         run: |
-          if [ ! -f repo/index.html ]; then
-            cat > repo/index.html << 'EOF'
+          if [ ! -f repo/gsdb/index.html ]; then
+            cat > repo/gsdb/index.html << 'EOF'
           <!DOCTYPE html>
           <html>
           <head><meta charset="utf-8"><title>GSDB Package Repository</title></head>
