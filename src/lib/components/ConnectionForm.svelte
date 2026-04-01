@@ -47,11 +47,19 @@
       { value: "verify_ca", label: "verify_ca" },
       { value: "verify_identity", label: "verify_identity" },
     ],
+    sqlserver: [
+      { value: "disable", label: "disable (no encryption)" },
+      { value: "allow", label: "allow" },
+      { value: "prefer", label: "prefer (default, trust cert)" },
+      { value: "require", label: "require (trust cert)" },
+      { value: "verify", label: "verify (validate cert)" },
+    ],
   };
 
   const defaultSslMode: Record<string, string> = {
     postgres: "prefer",
     mysql: "preferred",
+    sqlserver: "prefer",
   };
 
   // SSH tunnel fields
@@ -234,7 +242,9 @@
       database,
       ...(driver !== "sqlite" ? { host, port, username, password } : {}),
       ...(driver === "sqlite" ? { filePath } : {}),
-      ...(driver === "postgres" || driver === "mysql" ? { sslMode } : {}),
+      ...(driver === "postgres" || driver === "mysql" || driver === "sqlserver"
+        ? { sslMode }
+        : {}),
       ...(ssh ? { ssh } : {}),
     };
     connecting = true;
@@ -332,8 +342,8 @@
           </div>
         </div>
 
-        <!-- SSL Mode (postgres + mysql) -->
-        {#if driver === "postgres" || driver === "mysql"}
+        <!-- SSL Mode (postgres + mysql + sqlserver) -->
+        {#if driver === "postgres" || driver === "mysql" || driver === "sqlserver"}
           <div class="grid gap-1.5">
             <label class="text-sm font-medium" for="conn-ssl">SSL Mode</label>
             <Select.Root

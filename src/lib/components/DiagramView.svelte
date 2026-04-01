@@ -260,7 +260,8 @@
       await writeTextFile(filePath, buildDiagramSvg());
       toast.success("Diagram exported as SVG");
     } catch (e) {
-      toast.error(`Export failed: ${e}`);
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error(`Export failed: ${message || "Unknown error"}`);
     }
   }
 
@@ -273,30 +274,37 @@
     if (!filePath) return;
     try {
       const svg = buildDiagramSvg();
-      const svgBlob = new Blob([svg], { type: "image/svg+xml" });
-      const url = URL.createObjectURL(svgBlob);
+      // Use data URL instead of blob URL to avoid CORS issues in production
+      const dataUrl =
+        "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svg)));
       const img = new Image();
       await new Promise<void>((resolve, reject) => {
         img.onload = () => resolve();
-        img.onerror = reject;
-        img.src = url;
+        img.onerror = () => reject(new Error("Failed to load SVG image"));
+        img.src = dataUrl;
       });
-      URL.revokeObjectURL(url);
       const dpr = window.devicePixelRatio || 1;
       const canvas = document.createElement("canvas");
       canvas.width = img.naturalWidth * dpr;
       canvas.height = img.naturalHeight * dpr;
-      const ctx = canvas.getContext("2d")!;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        throw new Error("Failed to get canvas context");
+      }
       ctx.scale(dpr, dpr);
       ctx.drawImage(img, 0, 0);
-      const dataUrl = canvas.toDataURL("image/png");
-      const bytes = Uint8Array.from(atob(dataUrl.split(",")[1]), (c) =>
+      const pngDataUrl = canvas.toDataURL("image/png");
+      if (!pngDataUrl.startsWith("data:image/png")) {
+        throw new Error("Failed to generate PNG data");
+      }
+      const bytes = Uint8Array.from(atob(pngDataUrl.split(",")[1]), (c) =>
         c.charCodeAt(0),
       );
       await writeFile(filePath, bytes);
       toast.success("Diagram exported as PNG");
     } catch (e) {
-      toast.error(`Export failed: ${e}`);
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error(`Export failed: ${message || "Unknown error"}`);
     }
   }
 

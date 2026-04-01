@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tiberius::{AuthMethod, Client, ColumnType, Config, Row};
+use tiberius::{AuthMethod, Client, ColumnType, Config, EncryptionLevel, Row};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
@@ -26,7 +26,7 @@ impl SqlServerDriver {
         database: &str,
         username: &str,
         password: &str,
-        trust_cert: bool,
+        ssl_mode: Option<&str>,
     ) -> Result<Self, DbError> {
         let mut config = Config::new();
         config.host(host);
@@ -35,8 +35,43 @@ impl SqlServerDriver {
             config.database(database);
         }
         config.authentication(AuthMethod::sql_server(username, password));
-        if trust_cert {
-            config.trust_cert();
+
+        // Configure SSL/TLS based on ssl_mode
+        // SQL Server SSL modes:
+        // - "disable" / "allow" -> No encryption (or encrypt if server supports)
+        // - "prefer" / "preferred" -> Encrypt but don't verify certificate (default)
+        // - "require" -> Require encryption, don't verify certificate
+        // - "verify" / "verify-ca" -> Require encryption and verify certificate
+        match ssl_mode.unwrap_or("prefer") {
+            "disable" => {
+                // No encryption - DANGER_PLAINTEXT
+                config.encryption(EncryptionLevel::NotSupported);
+            }
+            "allow" => {
+                // Encrypt if server supports it, allow unencrypted
+                // tiberius doesn't have an "allow" equivalent, use NotSupported
+                config.encryption(EncryptionLevel::NotSupported);
+            }
+            "prefer" | "preferred" => {
+                // Default: encrypt but trust any certificate
+                config.encryption(EncryptionLevel::Required);
+                config.trust_cert();
+            }
+            "require" => {
+                // Require encryption, trust any certificate
+                config.encryption(EncryptionLevel::Required);
+                config.trust_cert();
+            }
+            "verify" | "verify-ca" | "verify-full" => {
+                // Require encryption and verify certificate against system trust store
+                config.encryption(EncryptionLevel::Required);
+                // Don't call trust_cert() - verify against system certificates
+            }
+            _ => {
+                // Unknown mode, use default (encrypt, trust any cert)
+                config.encryption(EncryptionLevel::Required);
+                config.trust_cert();
+            }
         }
 
         let tcp = TcpStream::connect(config.get_addr())
@@ -63,17 +98,15 @@ impl Driver for SqlServerDriver {
 
     async fn run_query(&self, sql: &str) -> Result<QueryResult, DbError> {
         let mut client = self.client.lock().await;
-        eprintln!("[SQL Server] Acquired lock, executing: {}", sql);
         let stream = client
             .simple_query(sql)
             .await
             .map_err(|e| DbError::Config(e.to_string()))?;
-        eprintln!("[SQL Server] Query sent, calling into_first_result...");
+
         let rows = stream
             .into_first_result()
             .await
             .map_err(|e| DbError::Config(e.to_string()))?;
-        eprintln!("[SQL Server] Got {} rows, processing...", rows.len());
 
         if rows.is_empty() {
             return Ok(QueryResult {

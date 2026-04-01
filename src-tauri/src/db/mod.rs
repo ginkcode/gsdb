@@ -1,22 +1,22 @@
-pub mod types;
 pub mod driver;
+pub mod types;
 
-mod postgres;
+mod export;
 mod mysql;
+mod postgres;
 mod sqlite;
 mod sqlserver;
 mod ssh;
-mod export;
 
-pub use types::{Connection, QueryResult, SchemaGraph, TableInfo};
 pub use driver::{DbError, Dialect, Driver};
 pub use ssh::SshTunnel;
+pub use types::{Connection, QueryResult, SchemaGraph, TableInfo};
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use postgres::PostgresDriver;
 use mysql::MySqlDriver;
+use postgres::PostgresDriver;
 use sqlite::SqliteDriver;
 use sqlserver::SqlServerDriver;
 
@@ -93,7 +93,6 @@ impl DbPool {
                     conn.host.as_deref().unwrap_or("localhost")
                 };
                 let port = tunnel_port.unwrap_or_else(|| conn.port.unwrap_or(1433));
-                let trust_cert = conn.ssl_mode.as_deref() != Some("verify");
                 Arc::new(
                     SqlServerDriver::connect(
                         host,
@@ -101,7 +100,7 @@ impl DbPool {
                         &conn.database,
                         conn.username.as_deref().unwrap_or(""),
                         conn.password.as_deref().unwrap_or(""),
-                        trust_cert,
+                        conn.ssl_mode.as_deref(),
                     )
                     .await?,
                 )
