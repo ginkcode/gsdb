@@ -96,6 +96,15 @@
     sqlserver: "MS",
   };
 
+  // Generate a SELECT query with limit, using dialect-appropriate syntax
+  function selectQuery(driver: string, table: string, limit = 100): string {
+    if (driver === "sqlserver") {
+      return `SELECT TOP ${limit} * FROM [${table}];`;
+    }
+    const quoted = driver === "mysql" ? `\`${table}\`` : `"${table}"`;
+    return `SELECT * FROM ${quoted} LIMIT ${limit};`;
+  }
+
   async function toggleConnection(connId: string) {
     // Set this connection as active when clicked
     activeConnectionId.set(connId);
@@ -196,7 +205,7 @@
     let existingDiagramTab: QueryTab | undefined;
     queryTabs.subscribe((tabs) => {
       existingDiagramTab = tabs.find(
-        (t) => t.connectionId === conn.id && t.kind === "diagram"
+        (t) => t.connectionId === conn.id && t.kind === "diagram",
       );
     })();
 
@@ -455,13 +464,9 @@
         onViewDiagram={() => openDiagram(conn)}
         onDelete={() => onDeleteConnection(conn)}
         onOpenTable={(table) =>
-          openTableTab(conn.id, table, `SELECT * FROM ${table} LIMIT 100;`)}
+          openTableTab(conn.id, table, selectQuery(conn.driver, table))}
         onPreviewTable={(table) =>
-          openTableTabPreview(
-            conn.id,
-            table,
-            `SELECT * FROM ${table} LIMIT 100;`,
-          )}
+          openTableTabPreview(conn.id, table, selectQuery(conn.driver, table))}
         onShowTableInfo={(table) => showTableInfo(conn.id, table)}
         onExportTable={(table) => exportTable(conn.id, table)}
         onImportTable={() => importSql(conn.id)}

@@ -39,8 +39,12 @@
             selected = new Set(g.tables.map((t) => t.name));
           }
         })
-        .catch((e) => { error = String(e); })
-        .finally(() => { loading = false; });
+        .catch((e) => {
+          error = String(e);
+        })
+        .finally(() => {
+          loading = false;
+        });
     }
     if (!open) {
       // Reset for next open
@@ -51,8 +55,8 @@
 
   let filtered = $derived(
     schema?.tables.filter((t) =>
-      t.name.toLowerCase().includes(search.toLowerCase())
-    ) ?? []
+      t.name.toLowerCase().includes(search.toLowerCase()),
+    ) ?? [],
   );
 
   function toggleAll(selectAll: boolean) {
@@ -81,12 +85,15 @@
     <Dialog.Header>
       <Dialog.Title>Select tables for diagram</Dialog.Title>
       <Dialog.Description>
-        Choose which tables to include. You can rearrange them on the canvas afterward.
+        Choose which tables to include. You can rearrange them on the canvas
+        afterward.
       </Dialog.Description>
     </Dialog.Header>
 
     {#if loading}
-      <div class="flex items-center justify-center py-8 gap-2 text-sm text-muted-foreground">
+      <div
+        class="flex items-center justify-center py-8 gap-2 text-sm text-muted-foreground"
+      >
         <span class="w-2 h-2 rounded-full bg-primary animate-bounce"></span>
         Loading schema…
       </div>
@@ -96,14 +103,22 @@
       <div class="flex flex-col gap-3">
         <Input bind:value={search} placeholder="Search tables…" class="h-8" />
 
-        <div class="flex items-center justify-between text-xs text-muted-foreground px-0.5">
+        <div
+          class="flex items-center justify-between text-xs text-muted-foreground px-0.5"
+        >
           <span>{selected.size} / {schema.tables.length} selected</span>
           <div class="flex gap-2">
-            <button class="hover:text-foreground transition-colors" onclick={() => toggleAll(true)}>
+            <button
+              class="hover:text-foreground transition-colors"
+              onclick={() => toggleAll(true)}
+            >
               Select all
             </button>
             <span>·</span>
-            <button class="hover:text-foreground transition-colors" onclick={() => toggleAll(false)}>
+            <button
+              class="hover:text-foreground transition-colors"
+              onclick={() => toggleAll(false)}
+            >
               None
             </button>
           </div>
@@ -121,14 +136,20 @@
                   onchange={() => toggle(table.name)}
                   class="accent-primary w-3.5 h-3.5 shrink-0"
                 />
-                <span class="truncate flex-1 min-w-0" title={table.name}>{table.name}</span>
-                <span class="text-xs text-muted-foreground shrink-0 whitespace-nowrap">
+                <span class="truncate flex-1 min-w-0" title={table.name}
+                  >{table.name}</span
+                >
+                <span
+                  class="text-xs text-muted-foreground shrink-0 whitespace-nowrap"
+                >
                   {table.columns.length} cols
                 </span>
               </label>
             {/each}
             {#if filtered.length === 0}
-              <p class="text-xs text-muted-foreground text-center py-4">No tables match</p>
+              <p class="text-xs text-muted-foreground text-center py-4">
+                No tables match
+              </p>
             {/if}
           </div>
         </ScrollArea>

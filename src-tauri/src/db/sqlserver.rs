@@ -9,7 +9,9 @@ use tokio::sync::Mutex;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use super::driver::{DbError, Dialect, Driver};
-use super::types::{QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo};
+use super::types::{
+    QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo,
+};
 
 // ── Driver ────────────────────────────────────────────────────────────────────
 
@@ -61,15 +63,17 @@ impl Driver for SqlServerDriver {
 
     async fn run_query(&self, sql: &str) -> Result<QueryResult, DbError> {
         let mut client = self.client.lock().await;
+        eprintln!("[SQL Server] Acquired lock, executing: {}", sql);
         let stream = client
             .simple_query(sql)
             .await
             .map_err(|e| DbError::Config(e.to_string()))?;
-
+        eprintln!("[SQL Server] Query sent, calling into_first_result...");
         let rows = stream
             .into_first_result()
             .await
             .map_err(|e| DbError::Config(e.to_string()))?;
+        eprintln!("[SQL Server] Got {} rows, processing...", rows.len());
 
         if rows.is_empty() {
             return Ok(QueryResult {
@@ -228,7 +232,10 @@ impl Driver for SqlServerDriver {
             if tables.last().map(|t: &SchemaTable| t.name.as_str()) == Some(tbl.as_str()) {
                 tables.last_mut().unwrap().columns.push(col);
             } else {
-                tables.push(SchemaTable { name: tbl, columns: vec![col] });
+                tables.push(SchemaTable {
+                    name: tbl,
+                    columns: vec![col],
+                });
             }
         }
 
@@ -261,12 +268,39 @@ impl Driver for SqlServerDriver {
             })
             .collect();
 
-        Ok(SchemaGraph { tables, foreign_keys })
+        Ok(SchemaGraph {
+            tables,
+            foreign_keys,
+        })
     }
 
     async fn get_table_definition(&self, table_name: &str) -> Result<String, DbError> {
         let mut client = self.client.lock().await;
 
+        // First check if this is a view
+        let view_sql = format!(
+            "SELECT OBJECT_DEFINITION(OBJECT_ID('{}', 'V'))",
+            table_name.replace('\'', "''")
+        );
+        let view_rows = client
+            .simple_query(&view_sql)
+            .await
+            .map_err(|e| DbError::Config(e.to_string()))?
+            .into_first_result()
+            .await
+            .map_err(|e| DbError::Config(e.to_string()))?;
+
+        // If it's a view, return the CREATE VIEW statement
+        if let Some(row) = view_rows.first() {
+            if let Some(def) = row.get::<&str, _>(0) {
+                return Ok(format!(
+                    "-- View Definition\n{};",
+                    def.trim().trim_end_matches(';')
+                ));
+            }
+        }
+
+        // Otherwise, it's a table - get column definitions
         // Columns
         let col_sql = format!(
             "SELECT c.COLUMN_NAME, c.DATA_TYPE, c.IS_NULLABLE, c.COLUMN_DEFAULT, \
@@ -402,21 +436,25 @@ fn mssql_value(row: &Row, idx: usize) -> Value {
             if let Some(v) = row.get::<u8, _>(idx) {
                 return Value::Number((v as i64).into());
             }
+            return Value::Null;
         }
         ColumnType::Int2 => {
             if let Some(v) = row.get::<i16, _>(idx) {
                 return Value::Number(i64::from(v).into());
             }
+            return Value::Null;
         }
         ColumnType::Int4 => {
             if let Some(v) = row.get::<i32, _>(idx) {
                 return Value::Number(i64::from(v).into());
             }
+            return Value::Null;
         }
         ColumnType::Int8 => {
             if let Some(v) = row.get::<i64, _>(idx) {
                 return Value::Number(v.into());
             }
+            return Value::Null;
         }
         // Floats
         ColumnType::Float4 => {
@@ -425,6 +463,7 @@ fn mssql_value(row: &Row, idx: usize) -> Value {
                     return Value::Number(n);
                 }
             }
+            return Value::Null;
         }
         ColumnType::Float8 => {
             if let Some(v) = row.get::<f64, _>(idx) {
@@ -432,6 +471,7 @@ fn mssql_value(row: &Row, idx: usize) -> Value {
                     return Value::Number(n);
                 }
             }
+            return Value::Null;
         }
         // Decimal / Numeric / Money
         ColumnType::Numericn | ColumnType::Decimaln | ColumnType::Money4 | ColumnType::Money => {
@@ -440,12 +480,14 @@ fn mssql_value(row: &Row, idx: usize) -> Value {
                     return Value::Number(n);
                 }
             }
+            return Value::Null;
         }
         // Boolean
         ColumnType::Bit => {
             if let Some(v) = row.get::<bool, _>(idx) {
                 return Value::Bool(v);
             }
+            return Value::Null;
         }
         // Dates and times — Daten/Timen/DatetimeOffsetn fall through to &str fallback
         // (tiberius FromSql is not implemented for NaiveDate, NaiveTime, DateTime<FixedOffset>)
@@ -453,12 +495,14 @@ fn mssql_value(row: &Row, idx: usize) -> Value {
             if let Some(v) = row.get::<chrono::NaiveDateTime, _>(idx) {
                 return Value::String(v.to_string());
             }
+            return Value::Null;
         }
         // Binary
         ColumnType::BigBinary | ColumnType::BigVarBin | ColumnType::Image => {
             if let Some(v) = row.get::<&[u8], _>(idx) {
                 return Value::String(format!("0x{}", hex::encode(v)));
             }
+            return Value::Null;
         }
         // All string types
         _ => {}

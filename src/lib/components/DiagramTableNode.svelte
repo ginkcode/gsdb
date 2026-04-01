@@ -3,7 +3,9 @@
   import type { SchemaTable } from "$lib/types";
 
   let { data }: { data: { table: SchemaTable } } = $props();
-  const { table } = data;
+
+  // Use $derived to reactively get the table from data
+  const table = $derived(data.table);
 
   // Constants matching DiagramView.svelte
   const HEADER_H = 34;
