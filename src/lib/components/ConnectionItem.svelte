@@ -159,6 +159,7 @@
     <Item
       class="flex items-center gap-2 cursor-pointer"
       onclick={onChangeDatabase}
+      disabled={connection.locked}
     >
       <Database class="w-4 h-4" /><span>Change Database</span>
     </Item>

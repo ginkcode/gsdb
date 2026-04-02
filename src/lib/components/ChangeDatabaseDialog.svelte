@@ -58,7 +58,10 @@
     if (!name || !connection) return;
     creating = true;
     try {
-      await invoke("create_database", { connectionId: connection.id, dbName: name });
+      await invoke("create_database", {
+        connectionId: connection.id,
+        dbName: name,
+      });
       onSelect(name);
       open = false;
     } catch (e) {
@@ -74,20 +77,26 @@
     <Dialog.Header>
       <Dialog.Title>Change Database</Dialog.Title>
       <Dialog.Description>
-        Select a database on <span class="font-medium text-foreground">{connection?.name}</span>
+        Select a database on <span class="font-medium text-foreground"
+          >{connection?.name}</span
+        >
       </Dialog.Description>
     </Dialog.Header>
 
     <div class="mt-2 flex flex-col gap-3">
       {#if loading}
-        <div class="flex items-center justify-center py-8 gap-2 text-sm text-muted-foreground">
+        <div
+          class="flex items-center justify-center py-8 gap-2 text-sm text-muted-foreground"
+        >
           <Loader class="w-4 h-4 animate-spin" />
           Loading databases…
         </div>
       {:else if error}
         <div class="py-4 text-sm text-destructive">{error}</div>
       {:else if databases.length === 0}
-        <div class="py-4 text-sm text-muted-foreground text-center">No databases found</div>
+        <div class="py-4 text-sm text-muted-foreground text-center">
+          No databases found
+        </div>
       {:else}
         <ScrollArea class="max-h-60">
           <div class="flex flex-col gap-0.5 pr-2">
@@ -95,14 +104,16 @@
               <button
                 class="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-left transition-colors
                   {db === connection?.database
-                    ? 'bg-accent text-accent-foreground font-medium'
-                    : 'hover:bg-muted text-foreground'}"
+                  ? 'bg-accent text-accent-foreground font-medium'
+                  : 'hover:bg-muted text-foreground'}"
                 onclick={() => select(db)}
               >
                 <Database class="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
                 <span class="truncate">{db}</span>
                 {#if db === connection?.database}
-                  <span class="ml-auto text-xs text-muted-foreground shrink-0">current</span>
+                  <span class="ml-auto text-xs text-muted-foreground shrink-0"
+                    >current</span
+                  >
                 {/if}
               </button>
             {/each}
@@ -112,22 +123,36 @@
 
       <!-- New database section -->
       <div class="border-t border-border pt-3">
-        {#if showNewDb}
+        {#if connection?.locked}
+          <p class="text-xs text-muted-foreground text-center py-2">
+            Create database is disabled for locked connections
+          </p>
+        {:else if showNewDb}
           <div class="flex gap-2">
             <Input
               placeholder="New database name"
               bind:value={newDbName}
               class="h-8 text-sm"
-              onkeydown={(e) => { if (e.key === "Enter") confirmNew(); if (e.key === "Escape") showNewDb = false; }}
+              onkeydown={(e) => {
+                if (e.key === "Enter") confirmNew();
+                if (e.key === "Escape") showNewDb = false;
+              }}
             />
-            <Button size="sm" class="h-8 shrink-0" onclick={confirmNew} disabled={!newDbName.trim() || creating}>
+            <Button
+              size="sm"
+              class="h-8 shrink-0"
+              onclick={confirmNew}
+              disabled={!newDbName.trim() || creating}
+            >
               {creating ? "Creating…" : "Create & Connect"}
             </Button>
           </div>
         {:else}
           <button
             class="flex items-center gap-2 w-full px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-            onclick={() => { showNewDb = true; }}
+            onclick={() => {
+              showNewDb = true;
+            }}
           >
             <Plus class="w-3.5 h-3.5 shrink-0" />
             <span>Connect to a new database</span>

@@ -5,6 +5,14 @@
 
 @source "../";
 
+/* Prevent overscroll/bounce effect on the entire app */
+html,
+body {
+  overscroll-behavior: none;
+  overflow: hidden;
+  height: 100%;
+}
+
 /* SvelteFlow (xyflow) overrides */
 .svelte-flow__attribution {
   display: none;
@@ -46,8 +54,9 @@
   min-height: 200px;
 }
 .cm-editor-wrapper .cm-editor .cm-scroller {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
 }
 .cm-editor-wrapper .cm-editor .cm-content {
   padding: 0;

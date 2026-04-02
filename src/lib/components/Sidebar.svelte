@@ -243,6 +243,13 @@
   let changeDatabaseConnection = $state<Connection | null>(null);
 
   function openChangeDatabase(conn: Connection) {
+    if (conn.locked) {
+      toast.error("Connection is locked", {
+        description:
+          "This connection is in read-only mode. Unlock the connection to change database.",
+      });
+      return;
+    }
     changeDatabaseConnection = conn;
     changeDatabaseDialogOpen = true;
   }
