@@ -305,10 +305,11 @@ impl Driver for PostgresDriver {
         });
 
         // Get max connections
-        let max_conn_row = sqlx::query("SELECT setting FROM pg_settings WHERE name = 'max_connections'")
-            .fetch_one(&self.0)
-            .await
-            .ok();
+        let max_conn_row =
+            sqlx::query("SELECT setting FROM pg_settings WHERE name = 'max_connections'")
+                .fetch_one(&self.0)
+                .await
+                .ok();
         let max_connections = max_conn_row.and_then(|r| r.try_get::<String, _>(0).ok());
 
         let mut extra = Vec::new();

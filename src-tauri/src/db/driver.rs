@@ -45,10 +45,8 @@ pub trait Driver: Send + Sync {
 
     async fn list_databases(&self) -> Result<Vec<String>, DbError>;
 
-    async fn get_column_nullable(
-        &self,
-        table_name: &str,
-    ) -> Result<HashMap<String, bool>, DbError>;
+    async fn get_column_nullable(&self, table_name: &str)
+        -> Result<HashMap<String, bool>, DbError>;
 
     async fn create_database(&self, db_name: &str) -> Result<(), DbError>;
 

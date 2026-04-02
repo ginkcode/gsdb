@@ -174,10 +174,8 @@ impl Driver for SqliteDriver {
             .fetch_all(&self.0)
             .await
             .ok();
-        let database_name = file_row.and_then(|rows| {
-            rows.first()
-                .and_then(|r| r.try_get::<String, _>(2).ok())
-        });
+        let database_name =
+            file_row.and_then(|rows| rows.first().and_then(|r| r.try_get::<String, _>(2).ok()));
 
         // Get page count and page size for size calculation
         let page_count_row = sqlx::query("PRAGMA page_count")
@@ -207,12 +205,10 @@ impl Driver for SqliteDriver {
         };
 
         // Get table count
-        let table_count_row = sqlx::query(
-            "SELECT count(*) FROM sqlite_master WHERE type='table'"
-        )
-        .fetch_one(&self.0)
-        .await
-        .ok();
+        let table_count_row = sqlx::query("SELECT count(*) FROM sqlite_master WHERE type='table'")
+            .fetch_one(&self.0)
+            .await
+            .ok();
         let table_count = table_count_row.and_then(|r| r.try_get::<i64, _>(0).ok());
 
         let mut extra = Vec::new();

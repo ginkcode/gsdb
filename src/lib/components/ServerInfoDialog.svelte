@@ -61,7 +61,9 @@
 
     {#if loading}
       <div class="flex items-center justify-center py-8">
-        <div class="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full"></div>
+        <div
+          class="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full"
+        ></div>
       </div>
     {:else if error}
       <div class="text-destructive text-sm py-4">{error}</div>
@@ -70,13 +72,17 @@
         {#if serverInfo.version}
           <div class="grid grid-cols-3 gap-2">
             <span class="text-muted-foreground text-sm">Version</span>
-            <span class="col-span-2 text-sm font-mono">{serverInfo.version}</span>
+            <span class="col-span-2 text-sm font-mono"
+              >{serverInfo.version}</span
+            >
           </div>
         {/if}
         {#if serverInfo.databaseName}
           <div class="grid grid-cols-3 gap-2">
             <span class="text-muted-foreground text-sm">Database</span>
-            <span class="col-span-2 text-sm font-mono">{serverInfo.databaseName}</span>
+            <span class="col-span-2 text-sm font-mono"
+              >{serverInfo.databaseName}</span
+            >
           </div>
         {/if}
         {#if serverInfo.host}
@@ -94,7 +100,9 @@
         {#if serverInfo.connections !== null && serverInfo.connections !== undefined}
           <div class="grid grid-cols-3 gap-2">
             <span class="text-muted-foreground text-sm">Connections</span>
-            <span class="col-span-2 text-sm font-mono">{serverInfo.connections}</span>
+            <span class="col-span-2 text-sm font-mono"
+              >{serverInfo.connections}</span
+            >
           </div>
         {/if}
         {#if serverInfo.size}
@@ -106,7 +114,8 @@
         {#if serverInfo.uptime}
           <div class="grid grid-cols-3 gap-2">
             <span class="text-muted-foreground text-sm">Uptime</span>
-            <span class="col-span-2 text-sm font-mono">{serverInfo.uptime}</span>
+            <span class="col-span-2 text-sm font-mono">{serverInfo.uptime}</span
+            >
           </div>
         {/if}
         {#each serverInfo.extra as [key, value]}
