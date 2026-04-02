@@ -1,6 +1,6 @@
 [package]
 name = "gsdb"
-version = "0.3.12"
+version = "0.3.13"
 description = "A database management tool"
 authors = ["you"]
 edition = "2021"

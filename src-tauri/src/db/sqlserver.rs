@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
-use super::driver::{DbError, Dialect, Driver};
+use super::driver::{DbError, Dialect, Driver, ServerInfo};
 use super::types::{
     QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo,
 };
@@ -423,6 +423,84 @@ impl Driver for SqlServerDriver {
                 pk_columns.join(", ")
             ))
         }
+    }
+
+    async fn get_server_info(&self) -> Result<ServerInfo, DbError> {
+        let mut client = self.client.lock().await;
+
+        // Get version - use @@VERSION which returns nvarchar
+        let version = match client.simple_query("SELECT CAST(@@VERSION AS NVARCHAR(500))").await {
+            Ok(result) => match result.into_first_result().await {
+                Ok(rows) => rows.first().and_then(|r| r.get::<&str, _>(0)).map(|s| {
+                    s.lines().next().unwrap_or(s).to_string()
+                }),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        };
+
+        // Get current database
+        let database_name = match client.simple_query("SELECT DB_NAME()").await {
+            Ok(result) => match result.into_first_result().await {
+                Ok(rows) => rows.first().and_then(|r| r.get::<&str, _>(0)).map(|s| s.to_string()),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        };
+
+        // Get connection count - may fail without permissions
+        let connections = match client.simple_query("SELECT COUNT(*) FROM sys.dm_exec_connections").await {
+            Ok(result) => match result.into_first_result().await {
+                Ok(rows) => rows.first().and_then(|r| r.get::<i32, _>(0)).map(|n| n as i64),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        };
+
+        // Get database size - use VARCHAR to avoid Numeric conversion issues
+        let size = match client.simple_query(
+            "SELECT CAST(SUM(size * 8.0 / 1024) AS VARCHAR(20)) FROM sys.master_files WHERE database_id = DB_ID()"
+        ).await {
+            Ok(result) => match result.into_first_result().await {
+                Ok(rows) => rows.first().and_then(|r| r.get::<&str, _>(0)).map(|s| format!("{} MB", s.trim())),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        };
+
+        // Get server name - use SERVERPROPERTY with CAST to avoid sql_variant
+        let host = match client.simple_query("SELECT CAST(SERVERPROPERTY('ServerName') AS NVARCHAR(128))").await {
+            Ok(result) => match result.into_first_result().await {
+                Ok(rows) => rows.first().and_then(|r| r.get::<&str, _>(0)).map(|s| s.to_string()),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        };
+
+        // Get max connections
+        let max_connections = match client.simple_query("SELECT @@MAX_CONNECTIONS").await {
+            Ok(result) => match result.into_first_result().await {
+                Ok(rows) => rows.first().and_then(|r| r.get::<i32, _>(0)).map(|n| n.to_string()),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        };
+
+        let mut extra = Vec::new();
+        if let Some(max) = max_connections {
+            extra.push(("Max Connections".to_string(), max));
+        }
+
+        Ok(ServerInfo {
+            version,
+            database_name,
+            connections,
+            size,
+            host,
+            port: None,
+            uptime: None,
+            extra,
+        })
     }
 }
 

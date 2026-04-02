@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::{Column, Row, TypeInfo};
 
-use super::driver::{DbError, Dialect, Driver};
+use super::driver::{DbError, Dialect, Driver, ServerInfo};
 use super::types::{
     QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo,
 };
@@ -262,6 +262,70 @@ impl Driver for PostgresDriver {
                 table_name, col_block, pk_def
             ))
         }
+    }
+
+    async fn get_server_info(&self) -> Result<ServerInfo, DbError> {
+        // Get version
+        let version_row = sqlx::query("SELECT version()")
+            .fetch_one(&self.0)
+            .await
+            .ok();
+        let version = version_row.and_then(|r| r.try_get::<String, _>(0).ok());
+
+        // Get current database
+        let db_row = sqlx::query("SELECT current_database()")
+            .fetch_one(&self.0)
+            .await
+            .ok();
+        let database_name = db_row.and_then(|r| r.try_get::<String, _>(0).ok());
+
+        // Get connection count
+        let conn_row = sqlx::query("SELECT count(*) FROM pg_stat_activity")
+            .fetch_one(&self.0)
+            .await
+            .ok();
+        let connections = conn_row.and_then(|r| r.try_get::<i64, _>(0).ok());
+
+        // Get database size
+        let size_row = sqlx::query("SELECT pg_size_pretty(pg_database_size(current_database()))")
+            .fetch_one(&self.0)
+            .await
+            .ok();
+        let size = size_row.and_then(|r| r.try_get::<String, _>(0).ok());
+
+        // Get server start time (uptime)
+        let uptime_row = sqlx::query("SELECT pg_postmaster_start_time()")
+            .fetch_one(&self.0)
+            .await
+            .ok();
+        let uptime = uptime_row.and_then(|r| {
+            r.try_get::<chrono::DateTime<chrono::Utc>, _>(0)
+                .ok()
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+        });
+
+        // Get max connections
+        let max_conn_row = sqlx::query("SELECT setting FROM pg_settings WHERE name = 'max_connections'")
+            .fetch_one(&self.0)
+            .await
+            .ok();
+        let max_connections = max_conn_row.and_then(|r| r.try_get::<String, _>(0).ok());
+
+        let mut extra = Vec::new();
+        if let Some(max) = max_connections {
+            extra.push(("Max Connections".to_string(), max));
+        }
+
+        Ok(ServerInfo {
+            version,
+            database_name,
+            connections,
+            size,
+            host: None,
+            port: None,
+            uptime,
+            extra,
+        })
     }
 }
 

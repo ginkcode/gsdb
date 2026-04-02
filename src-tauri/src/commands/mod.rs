@@ -281,3 +281,19 @@ pub async fn get_column_nullable(
         .await
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn get_server_info(
+    connection_id: String,
+    state: State<'_, AppState>,
+) -> Result<crate::db::ServerInfo, String> {
+    let pool = {
+        let pools = state.pools.lock().await;
+        pools
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+            .clone()
+    };
+
+    pool.get_server_info().await.map_err(|e| e.to_string())
+}

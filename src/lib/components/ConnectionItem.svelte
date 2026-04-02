@@ -51,9 +51,9 @@
     onEdit: () => void;
     onReconnect: () => void;
     onRefreshTables: () => void;
-    onRename: () => void;
     onToggleLock: () => void;
     onShowHistory: () => void;
+    onServerInfo: () => void;
     onExport: () => void;
     onImport: () => void;
     onChangeDatabase: () => void;
@@ -81,9 +81,9 @@
     onEdit,
     onReconnect,
     onRefreshTables,
-    onRename,
     onToggleLock,
     onShowHistory,
+    onServerInfo,
     onExport,
     onImport,
     onChangeDatabase,
@@ -132,18 +132,6 @@
     </svg>
     <span>Refresh Tables</span>
   </Item>
-  <Item class="flex items-center gap-2 cursor-pointer" onclick={onRename}>
-    <svg
-      class="w-4 h-4"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2"
-    >
-      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-    </svg>
-    <span>Rename</span>
-  </Item>
   <Item class="flex items-center gap-2 cursor-pointer" onclick={onToggleLock}>
     {#if connection.locked}
       <Unlock class="w-4 h-4" /><span>Unlock (Allow Writes)</span>
@@ -154,12 +142,25 @@
   <Item class="flex items-center gap-2 cursor-pointer" onclick={onShowHistory}>
     <History class="w-4 h-4" /><span>Query History</span>
   </Item>
+  <Item class="flex items-center gap-2 cursor-pointer" onclick={onServerInfo}>
+    <svg
+      class="w-4 h-4"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4" />
+      <path d="M12 8h.01" />
+    </svg>
+    <span>Server Info</span>
+  </Item>
   <Separator />
   {#if connection.driver !== "sqlite"}
     <Item
       class="flex items-center gap-2 cursor-pointer"
       onclick={onChangeDatabase}
-      disabled={connection.locked}
     >
       <Database class="w-4 h-4" /><span>Change Database</span>
     </Item>

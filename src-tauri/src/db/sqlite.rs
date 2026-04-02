@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::{Column, Row, TypeInfo};
 
-use super::driver::{DbError, Dialect, Driver};
+use super::driver::{DbError, Dialect, Driver, ServerInfo};
 use super::types::{
     QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo,
 };
@@ -159,6 +159,77 @@ impl Driver for SqliteDriver {
         } else {
             Err(DbError::Sqlx(sqlx::Error::RowNotFound))
         }
+    }
+
+    async fn get_server_info(&self) -> Result<ServerInfo, DbError> {
+        // Get SQLite version
+        let version_row = sqlx::query("SELECT sqlite_version()")
+            .fetch_one(&self.0)
+            .await
+            .ok();
+        let version = version_row.and_then(|r| r.try_get::<String, _>(0).ok());
+
+        // Get database file path
+        let file_row = sqlx::query("PRAGMA database_list")
+            .fetch_all(&self.0)
+            .await
+            .ok();
+        let database_name = file_row.and_then(|rows| {
+            rows.first()
+                .and_then(|r| r.try_get::<String, _>(2).ok())
+        });
+
+        // Get page count and page size for size calculation
+        let page_count_row = sqlx::query("PRAGMA page_count")
+            .fetch_one(&self.0)
+            .await
+            .ok();
+        let page_size_row = sqlx::query("PRAGMA page_size")
+            .fetch_one(&self.0)
+            .await
+            .ok();
+        let size = match (page_count_row, page_size_row) {
+            (Some(pc), Some(ps)) => {
+                let pages: i64 = pc.try_get(0).unwrap_or(0);
+                let page_size: i64 = ps.try_get(0).unwrap_or(0);
+                let bytes = pages * page_size;
+                Some(if bytes < 1024 {
+                    format!("{} B", bytes)
+                } else if bytes < 1024 * 1024 {
+                    format!("{} KB", bytes / 1024)
+                } else if bytes < 1024 * 1024 * 1024 {
+                    format!("{} MB", bytes / 1024 / 1024)
+                } else {
+                    format!("{} GB", bytes / 1024 / 1024 / 1024)
+                })
+            }
+            _ => None,
+        };
+
+        // Get table count
+        let table_count_row = sqlx::query(
+            "SELECT count(*) FROM sqlite_master WHERE type='table'"
+        )
+        .fetch_one(&self.0)
+        .await
+        .ok();
+        let table_count = table_count_row.and_then(|r| r.try_get::<i64, _>(0).ok());
+
+        let mut extra = Vec::new();
+        if let Some(count) = table_count {
+            extra.push(("Tables".to_string(), count.to_string()));
+        }
+
+        Ok(ServerInfo {
+            version,
+            database_name,
+            connections: None, // SQLite doesn't have connection tracking
+            size,
+            host: None,
+            port: None,
+            uptime: None,
+            extra,
+        })
     }
 }
 

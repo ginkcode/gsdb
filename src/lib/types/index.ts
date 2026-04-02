@@ -73,6 +73,17 @@ export interface QueryResult {
   error?: string;
 }
 
+export interface ServerInfo {
+  version?: string;
+  databaseName?: string;
+  connections?: number;
+  size?: string;
+  host?: string;
+  port?: number;
+  uptime?: string;
+  extra: [string, string][];
+}
+
 export interface QueryTab {
   id: string;
   connectionId: string;

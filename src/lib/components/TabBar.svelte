@@ -1,5 +1,11 @@
 <script lang="ts">
-  import { X, SquareX, PanelLeftClose, PanelRightClose } from "@lucide/svelte";
+  import {
+    X,
+    SquareX,
+    PanelLeftClose,
+    PanelRightClose,
+    Lock,
+  } from "@lucide/svelte";
   import {
     queryTabs,
     activeTabId,
@@ -76,7 +82,7 @@
           role="tab"
           aria-selected={$activeTabId === tab.id}
           tabindex="0"
-          class="group flex items-center gap-2 px-4 py-2.5 text-sm border-r border-border transition-colors shrink-0 cursor-pointer select-none whitespace-nowrap h-full
+          class="group flex items-center gap-2 px-4 py-2.5 text-xs border-r border-border transition-colors shrink-0 cursor-pointer select-none whitespace-nowrap h-full
             {$activeTabId === tab.id
             ? 'bg-muted text-foreground border-b-2 border-b-primary -mb-px'
             : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}"
@@ -92,12 +98,27 @@
             >
               {driverLabel[conn.driver]}
             </span>
+            {#if conn.locked}
+              <Lock class="w-3 h-3 shrink-0 text-amber-500" />
+            {/if}
           {/if}
           {#if tab.kind === "diagram"}
-            <svg class="w-3 h-3 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="7" height="5" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/>
-              <rect x="8" y="16" width="8" height="5" rx="1"/>
-              <path d="M6.5 8v3h11V8M12 11v5"/>
+            <svg
+              class="w-3 h-3 shrink-0 text-muted-foreground"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <rect x="3" y="3" width="7" height="5" rx="1" /><rect
+                x="14"
+                y="3"
+                width="7"
+                height="5"
+                rx="1"
+              />
+              <rect x="8" y="16" width="8" height="5" rx="1" />
+              <path d="M6.5 8v3h11V8M12 11v5" />
             </svg>
           {/if}
           <span class={tab.temporary ? "italic" : ""}>{tab.title}</span>

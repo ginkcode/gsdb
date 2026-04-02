@@ -510,7 +510,13 @@
         <Button variant="outline">Cancel</Button>
       </Dialog.Close>
       <Button onclick={submit} disabled={connecting}>
-        {connecting ? "Connecting…" : "Connect"}
+        {connecting
+          ? editing
+            ? "Updating…"
+            : "Connecting…"
+          : editing
+            ? "Update"
+            : "Connect"}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::{Column, Row, TypeInfo};
 
-use super::driver::{DbError, Dialect, Driver};
+use super::driver::{DbError, Dialect, Driver, ServerInfo};
 use super::types::{
     QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo,
 };
@@ -223,6 +223,90 @@ impl Driver for MySqlDriver {
                 Err(DbError::Sqlx(sqlx::Error::RowNotFound))
             }
         }
+    }
+
+    async fn get_server_info(&self) -> Result<ServerInfo, DbError> {
+        // Get version
+        let version_row = sqlx::query("SELECT VERSION()")
+            .fetch_one(&self.0)
+            .await
+            .ok();
+        let version = version_row.and_then(|r| r.try_get::<String, _>(0).ok());
+
+        // Get current database
+        let db_row = sqlx::query("SELECT DATABASE()")
+            .fetch_one(&self.0)
+            .await
+            .ok();
+        let database_name = db_row.and_then(|r| r.try_get::<String, _>(0).ok());
+
+        // Get connection count
+        let conn_row = sqlx::query("SHOW STATUS LIKE 'Threads_connected'")
+            .fetch_one(&self.0)
+            .await
+            .ok();
+        let connections = conn_row.and_then(|r| {
+            r.try_get::<String, _>(1).ok().and_then(|s| s.parse::<i64>().ok())
+        });
+
+        // Get database size
+        let size_row = sqlx::query(
+            "SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS size_mb \
+             FROM information_schema.tables WHERE table_schema = DATABASE()"
+        )
+        .fetch_one(&self.0)
+        .await
+        .ok();
+        let size = size_row.and_then(|r| {
+            r.try_get::<f64, _>(0)
+                .ok()
+                .map(|s| format!("{:.2} MB", s))
+        });
+
+        // Get uptime
+        let uptime_row = sqlx::query("SHOW STATUS LIKE 'Uptime'")
+            .fetch_one(&self.0)
+            .await
+            .ok();
+        let uptime = uptime_row.and_then(|r| {
+            r.try_get::<String, _>(1).ok().and_then(|s| {
+                s.parse::<i64>().ok().map(|secs| {
+                    let days = secs / 86400;
+                    let hours = (secs % 86400) / 3600;
+                    let mins = (secs % 3600) / 60;
+                    if days > 0 {
+                        format!("{}d {}h {}m", days, hours, mins)
+                    } else if hours > 0 {
+                        format!("{}h {}m", hours, mins)
+                    } else {
+                        format!("{}m", mins)
+                    }
+                })
+            })
+        });
+
+        // Get max connections
+        let max_conn_row = sqlx::query("SHOW VARIABLES LIKE 'max_connections'")
+            .fetch_one(&self.0)
+            .await
+            .ok();
+        let max_connections = max_conn_row.and_then(|r| r.try_get::<String, _>(1).ok());
+
+        let mut extra = Vec::new();
+        if let Some(max) = max_connections {
+            extra.push(("Max Connections".to_string(), max));
+        }
+
+        Ok(ServerInfo {
+            version,
+            database_name,
+            connections,
+            size,
+            host: None,
+            port: None,
+            uptime,
+            extra,
+        })
     }
 }
 

@@ -32,17 +32,16 @@
   import ChangeDatabaseDialog from "./ChangeDatabaseDialog.svelte";
   import DiagramPickerDialog from "./DiagramPickerDialog.svelte";
   import QueryHistoryDialog from "./QueryHistoryDialog.svelte";
+  import ServerInfoDialog from "./ServerInfoDialog.svelte";
 
   let {
     onEditConnection,
     onDeleteConnection,
-    onRenameConnection,
     onNewConnection,
     header,
   }: {
     onEditConnection: (conn: Connection) => void;
     onDeleteConnection: (conn: Connection) => void;
-    onRenameConnection: (conn: Connection) => void;
     onNewConnection: () => void;
     header?: Snippet;
   } = $props();
@@ -112,6 +111,10 @@
   let queryHistoryDialogOpen = $state(false);
   let queryHistoryConnection = $state<Connection | null>(null);
 
+  // Server info dialog state
+  let serverInfoDialogOpen = $state(false);
+  let serverInfoConnection = $state<Connection | null>(null);
+
   const driverLabel: Record<string, string> = {
     postgres: "PG",
     mysql: "MY",
@@ -122,10 +125,10 @@
   // Generate a SELECT query with limit, using dialect-appropriate syntax
   function selectQuery(driver: string, table: string, limit = 100): string {
     if (driver === "sqlserver") {
-      return `SELECT TOP ${limit} * FROM [${table}]`;
+      return `SELECT TOP ${limit} * FROM [${table}];`;
     }
     const quoted = driver === "mysql" ? `\`${table}\`` : `"${table}"`;
-    return `SELECT * FROM ${quoted} LIMIT ${limit}`;
+    return `SELECT * FROM ${quoted} LIMIT ${limit};`;
   }
 
   async function toggleConnection(connId: string) {
@@ -243,13 +246,6 @@
   let changeDatabaseConnection = $state<Connection | null>(null);
 
   function openChangeDatabase(conn: Connection) {
-    if (conn.locked) {
-      toast.error("Connection is locked", {
-        description:
-          "This connection is in read-only mode. Unlock the connection to change database.",
-      });
-      return;
-    }
     changeDatabaseConnection = conn;
     changeDatabaseDialogOpen = true;
   }
@@ -276,6 +272,11 @@
   function openQueryHistory(conn: Connection) {
     queryHistoryConnection = conn;
     queryHistoryDialogOpen = true;
+  }
+
+  function openServerInfo(conn: Connection) {
+    serverInfoConnection = conn;
+    serverInfoDialogOpen = true;
   }
 
   function handleSelectHistoryQuery(sql: string) {
@@ -539,9 +540,9 @@
         onEdit={() => onEditConnection(conn)}
         onReconnect={() => handleReconnect(conn)}
         onRefreshTables={() => refreshTables(conn.id)}
-        onRename={() => onRenameConnection(conn)}
         onToggleLock={() => handleToggleLock(conn)}
         onShowHistory={() => openQueryHistory(conn)}
+        onServerInfo={() => openServerInfo(conn)}
         onExport={() => exportDatabase(conn)}
         onImport={() => importSql(conn.id)}
         onChangeDatabase={() => openChangeDatabase(conn)}
@@ -649,6 +650,13 @@
     history={queryHistoryConnection?.queryHistory ?? []}
     onSelect={handleSelectHistoryQuery}
     onClose={() => (queryHistoryDialogOpen = false)}
+  />
+
+  <!-- Server Info Dialog -->
+  <ServerInfoDialog
+    connection={serverInfoConnection}
+    open={serverInfoDialogOpen}
+    onClose={() => (serverInfoDialogOpen = false)}
   />
 
   {#if appVersion}

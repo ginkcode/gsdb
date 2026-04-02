@@ -55,4 +55,18 @@ pub trait Driver: Send + Sync {
     async fn get_table_definition(&self, table_name: &str) -> Result<String, DbError>;
 
     async fn get_schema(&self) -> Result<SchemaGraph, DbError>;
+
+    async fn get_server_info(&self) -> Result<ServerInfo, DbError>;
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ServerInfo {
+    pub version: Option<String>,
+    pub database_name: Option<String>,
+    pub connections: Option<i64>,
+    pub size: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<i32>,
+    pub uptime: Option<String>,
+    pub extra: Vec<(String, String)>,
 }

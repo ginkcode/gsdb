@@ -28,7 +28,6 @@
     loadSavedConnections,
     addConnection,
     removeConnection,
-    renameConnection,
     updateConnection,
     makeTabPermanent,
     addQueryHistory,
@@ -38,9 +37,7 @@
   let showConnectionForm = $state(false);
   let editingConnection = $state<Connection | null>(null);
   let deletingConnection = $state<Connection | null>(null);
-  let showRenameDialog = $state(false);
   let showDeleteDialog = $state(false);
-  let renameValue = $state("");
   let selectedRow = $state<Record<string, unknown> | null>(null);
   let selectedRowIndex = $state<number>(0);
   let showDetailPanel = $state(true);
@@ -204,12 +201,6 @@
     showDeleteDialog = true;
   }
 
-  function handleRenameConnection(conn: Connection) {
-    editingConnection = conn;
-    renameValue = conn.name;
-    showRenameDialog = true;
-  }
-
   function handleNewConnection() {
     editingConnection = null;
     showConnectionForm = true;
@@ -282,7 +273,6 @@
       <Sidebar
         onEditConnection={handleEditConnection}
         onDeleteConnection={handleDeleteConnection}
-        onRenameConnection={handleRenameConnection}
         onNewConnection={handleNewConnection}
       >
         {#snippet header()}
@@ -368,41 +358,6 @@
   bind:editing={editingConnection}
   onSave={saveConnection}
 />
-
-<!-- Rename Dialog -->
-<Dialog.Root bind:open={showRenameDialog}>
-  <Dialog.Content class="sm:max-w-sm">
-    <Dialog.Header>
-      <Dialog.Title>Rename Connection</Dialog.Title>
-    </Dialog.Header>
-    <div class="grid gap-4 py-2">
-      <div class="grid gap-1.5">
-        <label class="text-sm font-medium" for="rename-name">Name</label>
-        <Input
-          id="rename-name"
-          bind:value={renameValue}
-          placeholder="Connection name"
-        />
-      </div>
-    </div>
-    <Dialog.Footer>
-      <Button variant="outline" onclick={() => (showRenameDialog = false)}>
-        Cancel
-      </Button>
-      <Button
-        onclick={async () => {
-          if (editingConnection) {
-            await renameConnection(editingConnection.id, renameValue);
-            showRenameDialog = false;
-            editingConnection = null;
-          }
-        }}
-      >
-        Save
-      </Button>
-    </Dialog.Footer>
-  </Dialog.Content>
-</Dialog.Root>
 
 <!-- Delete Confirmation Dialog -->
 <Dialog.Root bind:open={showDeleteDialog}>

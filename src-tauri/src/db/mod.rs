@@ -8,7 +8,7 @@ mod sqlite;
 mod sqlserver;
 mod ssh;
 
-pub use driver::{DbError, Dialect, Driver};
+pub use driver::{DbError, Dialect, Driver, ServerInfo};
 pub use ssh::SshTunnel;
 pub use types::{Connection, QueryResult, SchemaGraph, TableInfo};
 
@@ -163,5 +163,9 @@ impl DbPool {
 
     pub async fn get_schema(&self) -> Result<SchemaGraph, DbError> {
         self.0.get_schema().await
+    }
+
+    pub async fn get_server_info(&self) -> Result<ServerInfo, DbError> {
+        self.0.get_server_info().await
     }
 }
