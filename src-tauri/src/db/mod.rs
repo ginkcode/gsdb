@@ -168,4 +168,8 @@ impl DbPool {
     pub async fn get_server_info(&self) -> Result<ServerInfo, DbError> {
         self.0.get_server_info().await
     }
+
+    pub async fn close(&self) -> Result<(), DbError> {
+        self.0.close().await
+    }
 }

@@ -48,11 +48,13 @@
 <Dialog.Root {open} onOpenChange={(v) => !v && onClose()}>
   <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
-      <Dialog.Title>Server Info</Dialog.Title>
+      <Dialog.Title>{connection?.driver === "sqlite" ? "DB Info" : "Server Info"}</Dialog.Title>
       <Dialog.Description>
         {#if connection}
           {driverNames[connection.driver] ?? connection.driver}
-          {#if connection.host}
+          {#if connection.driver === "sqlite" && connection.filePath}
+            <span class="block break-all text-xs mt-0.5">{connection.filePath}</span>
+          {:else if connection.host}
             - {connection.host}{#if connection.port}:{connection.port}{/if}
           {/if}
         {/if}
@@ -79,8 +81,8 @@
         {/if}
         {#if serverInfo.databaseName}
           <div class="grid grid-cols-3 gap-2">
-            <span class="text-muted-foreground text-sm">Database</span>
-            <span class="col-span-2 text-sm font-mono"
+            <span class="text-muted-foreground text-sm">{connection?.driver === "sqlite" ? "File Path" : "Database"}</span>
+            <span class="col-span-2 text-sm font-mono break-all"
               >{serverInfo.databaseName}</span
             >
           </div>

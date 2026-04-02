@@ -94,6 +94,7 @@ export interface QueryTab {
   result?: QueryResult;
   isLoading: boolean;
   temporary?: boolean; // preview tab opened by single click; replaced on next single click
+  autoRun?: boolean;  // run the default query immediately when the tab first opens
   // diagram-only
   selectedTables?: string[];
   nodePositions?: Record<string, { x: number; y: number }>;

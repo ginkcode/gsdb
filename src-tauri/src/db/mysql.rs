@@ -132,7 +132,7 @@ impl Driver for MySqlDriver {
                 pk: row.try_get::<i64, _>(4).unwrap_or(0) == 1,
             };
             if tables.last().map(|t: &SchemaTable| t.name.as_str()) == Some(tbl.as_str()) {
-                tables.last_mut().unwrap().columns.push(col);
+                if let Some(last) = tables.last_mut() { last.columns.push(col); }
             } else {
                 tables.push(SchemaTable {
                     name: tbl,

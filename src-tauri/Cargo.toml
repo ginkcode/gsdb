@@ -1,6 +1,6 @@
 [package]
 name = "gsdb"
-version = "0.3.14"
+version = "0.3.15"
 description = "A database management tool"
 authors = ["you"]
 edition = "2021"
@@ -34,7 +34,12 @@ sqlx = { version = "0.8", features = [
 ] }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
-tiberius = { version = "0.12", default-features = false, features = ["chrono", "rustls", "bigdecimal"] }
+tiberius = { version = "0.12", default-features = false, features = [
+    "chrono",
+    "rustls",
+    "bigdecimal",
+    "tds73",
+] }
 tokio-util = { version = "0.7", features = ["compat"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }

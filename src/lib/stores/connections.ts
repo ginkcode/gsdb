@@ -55,9 +55,12 @@ export async function loadSavedConnections(): Promise<Connection[]> {
         saved.map(async (conn) => {
           try {
             const password = await getPassword(KEYRING_SERVICE, getPasswordKey(conn.id));
+            console.log(`[Connections] Retrieved password for ${conn.name}:`, password ? 'found' : 'empty');
             return { ...conn, password: password || undefined };
-          } catch {
+          } catch (err) {
             // Password not found in keyring (first time or deleted)
+            // On Linux, this can also happen if keyring service is not available
+            console.warn(`[Connections] Could not retrieve password for ${conn.name}:`, err);
             return { ...conn, password: undefined };
           }
         })
@@ -121,7 +124,9 @@ export async function saveConnections(conns: Connection[]): Promise<void> {
       const passwordKey = getPasswordKey(conn.id);
       if (conn.password) {
         try {
+          console.log(`[Connections] Saving password for ${conn.id}...`);
           await setPassword(KEYRING_SERVICE, passwordKey, conn.password);
+          console.log(`[Connections] Password saved for ${conn.id}`);
         } catch (err) {
           console.error(`[Connections] Failed to save password for ${conn.id}:`, err);
         }
@@ -364,6 +369,7 @@ export function openTableTab(connectionId: string, tableName: string, sql: strin
     sql,
     isLoading: false,
     temporary: false,
+    autoRun: true,
   };
   queryTabs.update((ts) => [...ts, tab]);
   activeTabId.set(tab.id);
@@ -402,6 +408,7 @@ export function openTableTabPreview(connectionId: string, tableName: string, sql
     sql,
     isLoading: false,
     temporary: true,
+    autoRun: true,
   };
   queryTabs.update((ts) => {
     const withoutTemp = ts.filter((t) => !t.temporary);

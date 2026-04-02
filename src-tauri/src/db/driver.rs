@@ -55,6 +55,14 @@ pub trait Driver: Send + Sync {
     async fn get_schema(&self) -> Result<SchemaGraph, DbError>;
 
     async fn get_server_info(&self) -> Result<ServerInfo, DbError>;
+
+    /// Close the connection and release resources.
+    /// For connection pools (Postgres, MySQL, SQLite), this is a no-op.
+    /// For SQL Server (single connection), this properly closes the TCP connection.
+    async fn close(&self) -> Result<(), DbError> {
+        // Default: no-op for connection pools that handle their own cleanup
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

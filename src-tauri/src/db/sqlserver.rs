@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
+use tiberius::xml::XmlData;
 use tiberius::{AuthMethod, Client, ColumnType, Config, EncryptionLevel, Row};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
@@ -16,7 +17,7 @@ use super::types::{
 // ── Driver ────────────────────────────────────────────────────────────────────
 
 pub struct SqlServerDriver {
-    client: Arc<Mutex<Client<Compat<TcpStream>>>>,
+    client: Arc<Mutex<Option<Client<Compat<TcpStream>>>>>,
 }
 
 impl SqlServerDriver {
@@ -85,8 +86,64 @@ impl SqlServerDriver {
             .map_err(|e| DbError::Config(e.to_string()))?;
 
         Ok(Self {
-            client: Arc::new(Mutex::new(client)),
+            client: Arc::new(Mutex::new(Some(client))),
         })
+    }
+}
+
+impl SqlServerDriver {
+    /// Returns a rewritten query that CASTs sql_variant columns to NVARCHAR(MAX),
+    /// or None if no sql_variant columns exist / detection fails.
+    async fn maybe_wrap_variant_sql(&self, sql: &str) -> Option<String> {
+        let escaped = sql.replace('\'', "''");
+        let meta_sql = format!("EXEC sp_describe_first_result_set N'{escaped}'");
+
+        let mut guard = self.client.lock().await;
+        let client = guard.as_mut()?;
+        let rows = client
+            .simple_query(&meta_sql)
+            .await
+            .ok()?
+            .into_first_result()
+            .await
+            .ok()?;
+
+        if rows.is_empty() {
+            return None;
+        }
+
+        // Collect (ordinal, name, is_variant) sorted by ordinal
+        let mut cols: Vec<(i32, String, bool)> = rows
+            .iter()
+            .filter_map(|row| {
+                let ordinal: Option<i32> = row.get("column_ordinal");
+                let type_id: Option<i32> = row.get("system_type_id");
+                let name: Option<&str> = row.get("name");
+                Some((ordinal?, name.unwrap_or("").to_string(), type_id == Some(98)))
+            })
+            .collect();
+        cols.sort_by_key(|(ord, _, _)| *ord);
+
+        if !cols.iter().any(|(_, _, is_variant)| *is_variant) {
+            return None;
+        }
+
+        let select_list: String = cols
+            .iter()
+            .map(|(_, name, is_variant)| {
+                let quoted = format!("[{}]", name.replace(']', "]]"));
+                if *is_variant {
+                    format!("CAST({quoted} AS NVARCHAR(MAX)) AS {quoted}")
+                } else {
+                    quoted
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        Some(format!(
+            "SELECT {select_list} FROM ({sql}) AS [_gsdb_wrap]"
+        ))
     }
 }
 
@@ -97,61 +154,85 @@ impl Driver for SqlServerDriver {
     }
 
     async fn run_query(&self, sql: &str) -> Result<QueryResult, DbError> {
-        let mut client = self.client.lock().await;
-        let stream = client
-            .simple_query(sql)
+        let sql = self
+            .maybe_wrap_variant_sql(sql)
             .await
-            .map_err(|e| DbError::Config(e.to_string()))?;
+            .unwrap_or_else(|| sql.to_string());
+        let client_arc = Arc::clone(&self.client);
 
-        let rows = stream
-            .into_first_result()
-            .await
-            .map_err(|e| DbError::Config(e.to_string()))?;
+        tokio::spawn(async move {
+            let mut guard = client_arc.lock().await;
+            let client = guard
+                .as_mut()
+                .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
+            let stream = client
+                .simple_query(&sql)
+                .await
+                .map_err(|e| DbError::Config(e.to_string()))?;
 
-        if rows.is_empty() {
-            return Ok(QueryResult {
-                columns: vec![],
-                column_types: vec![],
-                column_nullable: vec![],
-                rows: vec![],
-                rows_affected: Some(0),
-            });
-        }
+            let rows = stream
+                .into_first_result()
+                .await
+                .map_err(|e| DbError::Config(e.to_string()))?;
 
-        let columns: Vec<String> = rows[0]
-            .columns()
-            .iter()
-            .map(|c| c.name().to_string())
-            .collect();
-        let column_types: Vec<String> = rows[0]
-            .columns()
-            .iter()
-            .map(|c| col_type_name(c.column_type()))
-            .collect();
-        let column_nullable = vec![true; columns.len()];
+            if rows.is_empty() {
+                return Ok(QueryResult {
+                    columns: vec![],
+                    column_types: vec![],
+                    column_nullable: vec![],
+                    rows: vec![],
+                    rows_affected: Some(0),
+                });
+            }
 
-        let result_rows = rows
-            .iter()
-            .map(|row| {
-                columns
-                    .iter()
-                    .enumerate()
-                    .map(|(i, col)| (col.clone(), mssql_value(row, i)))
-                    .collect()
+            let columns: Vec<String> = rows[0]
+                .columns()
+                .iter()
+                .map(|c| c.name().to_string())
+                .collect();
+            let column_types: Vec<String> = rows[0]
+                .columns()
+                .iter()
+                .map(|c| col_type_name(c.column_type()))
+                .collect();
+            let column_nullable = vec![true; columns.len()];
+
+            let result_rows = rows
+                .iter()
+                .map(|row| {
+                    columns
+                        .iter()
+                        .enumerate()
+                        .map(|(i, col)| (col.clone(), mssql_value(row, i)))
+                        .collect()
+                })
+                .collect();
+
+            Ok(QueryResult {
+                columns,
+                column_types,
+                column_nullable,
+                rows: result_rows,
+                rows_affected: None,
             })
-            .collect();
-
-        Ok(QueryResult {
-            columns,
-            column_types,
-            column_nullable,
-            rows: result_rows,
-            rows_affected: None,
+        })
+        .await
+        .unwrap_or_else(|e| {
+            Err(DbError::Config(if e.is_panic() {
+                "Query contains an unsupported column type (sql_variant). \
+                 Cast it to a supported type, e.g. CAST(col AS NVARCHAR(MAX))."
+                    .to_string()
+            } else {
+                e.to_string()
+            }))
         })
     }
 
     async fn list_tables(&self) -> Result<Vec<TableInfo>, DbError> {
-        let mut client = self.client.lock().await;
+        let mut guard = self.client.lock().await;
+        let client = guard
+            .as_mut()
+            .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
         let rows = client
             .simple_query(
                 "SELECT TABLE_NAME, TABLE_TYPE \
@@ -179,7 +260,10 @@ impl Driver for SqlServerDriver {
     }
 
     async fn list_databases(&self) -> Result<Vec<String>, DbError> {
-        let mut client = self.client.lock().await;
+        let mut guard = self.client.lock().await;
+        let client = guard
+            .as_mut()
+            .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
         let rows = client
             .simple_query("SELECT name FROM sys.databases ORDER BY name")
             .await
@@ -198,7 +282,10 @@ impl Driver for SqlServerDriver {
         &self,
         table_name: &str,
     ) -> Result<HashMap<String, bool>, DbError> {
-        let mut client = self.client.lock().await;
+        let mut guard = self.client.lock().await;
+        let client = guard
+            .as_mut()
+            .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
         let sql = format!(
             "SELECT COLUMN_NAME, IS_NULLABLE \
              FROM INFORMATION_SCHEMA.COLUMNS \
@@ -231,7 +318,10 @@ impl Driver for SqlServerDriver {
     }
 
     async fn get_schema(&self) -> Result<SchemaGraph, DbError> {
-        let mut client = self.client.lock().await;
+        let mut guard = self.client.lock().await;
+        let client = guard
+            .as_mut()
+            .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
 
         let col_sql = "SELECT c.TABLE_NAME, c.COLUMN_NAME, c.DATA_TYPE, c.IS_NULLABLE, \
             CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END AS is_pk \
@@ -308,7 +398,10 @@ impl Driver for SqlServerDriver {
     }
 
     async fn get_table_definition(&self, table_name: &str) -> Result<String, DbError> {
-        let mut client = self.client.lock().await;
+        let mut guard = self.client.lock().await;
+        let client = guard
+            .as_mut()
+            .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
 
         // First check if this is a view
         let view_sql = format!(
@@ -426,14 +519,21 @@ impl Driver for SqlServerDriver {
     }
 
     async fn get_server_info(&self) -> Result<ServerInfo, DbError> {
-        let mut client = self.client.lock().await;
+        let mut guard = self.client.lock().await;
+        let client = guard
+            .as_mut()
+            .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
 
         // Get version - use @@VERSION which returns nvarchar
-        let version = match client.simple_query("SELECT CAST(@@VERSION AS NVARCHAR(500))").await {
+        let version = match client
+            .simple_query("SELECT CAST(@@VERSION AS NVARCHAR(500))")
+            .await
+        {
             Ok(result) => match result.into_first_result().await {
-                Ok(rows) => rows.first().and_then(|r| r.get::<&str, _>(0)).map(|s| {
-                    s.lines().next().unwrap_or(s).to_string()
-                }),
+                Ok(rows) => rows
+                    .first()
+                    .and_then(|r| r.get::<&str, _>(0))
+                    .map(|s| s.lines().next().unwrap_or(s).to_string()),
                 Err(_) => None,
             },
             Err(_) => None,
@@ -442,16 +542,25 @@ impl Driver for SqlServerDriver {
         // Get current database
         let database_name = match client.simple_query("SELECT DB_NAME()").await {
             Ok(result) => match result.into_first_result().await {
-                Ok(rows) => rows.first().and_then(|r| r.get::<&str, _>(0)).map(|s| s.to_string()),
+                Ok(rows) => rows
+                    .first()
+                    .and_then(|r| r.get::<&str, _>(0))
+                    .map(|s| s.to_string()),
                 Err(_) => None,
             },
             Err(_) => None,
         };
 
         // Get connection count - may fail without permissions
-        let connections = match client.simple_query("SELECT COUNT(*) FROM sys.dm_exec_connections").await {
+        let connections = match client
+            .simple_query("SELECT COUNT(*) FROM sys.dm_exec_connections")
+            .await
+        {
             Ok(result) => match result.into_first_result().await {
-                Ok(rows) => rows.first().and_then(|r| r.get::<i32, _>(0)).map(|n| n as i64),
+                Ok(rows) => rows
+                    .first()
+                    .and_then(|r| r.get::<i32, _>(0))
+                    .map(|n| n as i64),
                 Err(_) => None,
             },
             Err(_) => None,
@@ -469,9 +578,15 @@ impl Driver for SqlServerDriver {
         };
 
         // Get server name - use SERVERPROPERTY with CAST to avoid sql_variant
-        let host = match client.simple_query("SELECT CAST(SERVERPROPERTY('ServerName') AS NVARCHAR(128))").await {
+        let host = match client
+            .simple_query("SELECT CAST(SERVERPROPERTY('ServerName') AS NVARCHAR(128))")
+            .await
+        {
             Ok(result) => match result.into_first_result().await {
-                Ok(rows) => rows.first().and_then(|r| r.get::<&str, _>(0)).map(|s| s.to_string()),
+                Ok(rows) => rows
+                    .first()
+                    .and_then(|r| r.get::<&str, _>(0))
+                    .map(|s| s.to_string()),
                 Err(_) => None,
             },
             Err(_) => None,
@@ -480,7 +595,10 @@ impl Driver for SqlServerDriver {
         // Get max connections
         let max_connections = match client.simple_query("SELECT @@MAX_CONNECTIONS").await {
             Ok(result) => match result.into_first_result().await {
-                Ok(rows) => rows.first().and_then(|r| r.get::<i32, _>(0)).map(|n| n.to_string()),
+                Ok(rows) => rows
+                    .first()
+                    .and_then(|r| r.get::<i32, _>(0))
+                    .map(|n| n.to_string()),
                 Err(_) => None,
             },
             Err(_) => None,
@@ -502,6 +620,16 @@ impl Driver for SqlServerDriver {
             extra,
         })
     }
+
+    async fn close(&self) -> Result<(), DbError> {
+        // Take ownership of the client to properly close it
+        let mut guard = self.client.lock().await;
+        if let Some(client) = guard.take() {
+            // Properly close the connection
+            drop(client);
+        }
+        Ok(())
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -514,9 +642,10 @@ fn col_type_name(t: ColumnType) -> String {
         ColumnType::Int8 => "bigint",
         ColumnType::Float4 => "real",
         ColumnType::Float8 => "float",
-        ColumnType::Bit => "bit",
+        ColumnType::Bit | ColumnType::Bitn => "bit",
         ColumnType::Datetime => "datetime",
         ColumnType::Datetime2 => "datetime2",
+        ColumnType::Datetimen => "datetime",
         ColumnType::DatetimeOffsetn => "datetimeoffset",
         ColumnType::Daten => "date",
         ColumnType::Timen => "time",
@@ -533,6 +662,7 @@ fn col_type_name(t: ColumnType) -> String {
         ColumnType::NText => "ntext",
         ColumnType::Image => "image",
         ColumnType::Xml => "xml",
+        ColumnType::SSVariant => "sql_variant",
         _ => "unknown",
     }
     .to_string()
@@ -594,16 +724,43 @@ fn mssql_value(row: &Row, idx: usize) -> Value {
             return Value::Null;
         }
         // Boolean
-        ColumnType::Bit => {
+        ColumnType::Bit | ColumnType::Bitn => {
             if let Some(v) = row.get::<bool, _>(idx) {
                 return Value::Bool(v);
             }
             return Value::Null;
         }
-        // Dates and times — Daten/Timen/DatetimeOffsetn fall through to &str fallback
-        // (tiberius FromSql is not implemented for NaiveDate, NaiveTime, DateTime<FixedOffset>)
-        ColumnType::Datetime | ColumnType::Datetime2 => {
+        // GUID / uniqueidentifier
+        ColumnType::Guid => {
+            if let Some(v) = row.get::<uuid::Uuid, _>(idx) {
+                return Value::String(v.to_string());
+            }
+            return Value::Null;
+        }
+        // Dates and times - Datetime, Datetime2, and Datetimen (legacy datetime)
+        ColumnType::Datetime | ColumnType::Datetime2 | ColumnType::Datetimen => {
             if let Some(v) = row.get::<chrono::NaiveDateTime, _>(idx) {
+                return Value::String(v.to_string());
+            }
+            return Value::Null;
+        }
+        // DateTimeOffset - use chrono::DateTime<FixedOffset>
+        ColumnType::DatetimeOffsetn => {
+            if let Some(v) = row.get::<chrono::DateTime<chrono::FixedOffset>, _>(idx) {
+                return Value::String(v.to_string());
+            }
+            return Value::Null;
+        }
+        // Date
+        ColumnType::Daten => {
+            if let Some(v) = row.get::<chrono::NaiveDate, _>(idx) {
+                return Value::String(v.to_string());
+            }
+            return Value::Null;
+        }
+        // Time
+        ColumnType::Timen => {
+            if let Some(v) = row.get::<chrono::NaiveTime, _>(idx) {
                 return Value::String(v.to_string());
             }
             return Value::Null;
@@ -615,14 +772,69 @@ fn mssql_value(row: &Row, idx: usize) -> Value {
             }
             return Value::Null;
         }
-        // All string types
+        // XML
+        ColumnType::Xml => {
+            if let Some(v) = row.get::<&XmlData, _>(idx) {
+                return Value::String(v.as_ref().to_string());
+            }
+            return Value::Null;
+        }
+        // SQL_VARIANT — try different types since variant can hold anything
+        ColumnType::SSVariant => {
+            // Try bool first (for Bit values)
+            if let Some(v) = row.get::<bool, _>(idx) {
+                return Value::Bool(v);
+            }
+            // Try UUID (for uniqueidentifier values)
+            if let Some(v) = row.get::<uuid::Uuid, _>(idx) {
+                return Value::String(v.to_string());
+            }
+            // Try datetime (for DateTime values)
+            if let Some(v) = row.get::<chrono::NaiveDateTime, _>(idx) {
+                return Value::String(v.to_string());
+            }
+            // Try integers
+            if let Some(v) = row.get::<i64, _>(idx) {
+                return Value::Number(v.into());
+            }
+            if let Some(v) = row.get::<i32, _>(idx) {
+                return Value::Number(i64::from(v).into());
+            }
+            if let Some(v) = row.get::<i16, _>(idx) {
+                return Value::Number(i64::from(v).into());
+            }
+            // Try float
+            if let Some(v) = row.get::<f64, _>(idx) {
+                if let Some(n) = serde_json::Number::from_f64(v) {
+                    return Value::Number(n);
+                }
+            }
+            // Try string
+            if let Some(v) = row.get::<&str, _>(idx) {
+                return Value::String(v.to_string());
+            }
+            return Value::Null;
+        }
+        // All string types — explicit arm so NULL returns Value::Null, not "unsupported type"
+        ColumnType::BigVarChar
+        | ColumnType::BigChar
+        | ColumnType::Text
+        | ColumnType::NVarchar
+        | ColumnType::NChar
+        | ColumnType::NText => {
+            return match row.get::<&str, _>(idx) {
+                Some(v) => Value::String(v.to_string()),
+                None => Value::Null,
+            };
+        }
         _ => {}
     }
 
-    // String fallback — covers varchar, nvarchar, char, nchar, text, ntext, xml, etc.
+    // Fallback for any remaining type
     if let Some(v) = row.get::<&str, _>(idx) {
         return Value::String(v.to_string());
     }
 
-    Value::Null
+    // Unknown column type - return type name as placeholder
+    Value::String(format!("<unsupported type: {}>", col_type_name(col_type)))
 }

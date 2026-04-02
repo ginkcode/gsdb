@@ -129,7 +129,15 @@
     return readOnlyPatterns.some((pattern) => pattern.test(cleanSql));
   }
 
-  async function runQuery(tabId: string, sql: string) {
+  $effect(() => {
+    const tab = $activeTab;
+    if (tab?.autoRun && tab.sql && !tab.isLoading) {
+      updateTab(tab.id, { autoRun: false });
+      runQuery(tab.id, tab.sql, false);
+    }
+  });
+
+  async function runQuery(tabId: string, sql: string, manual = true) {
     const tab = $queryTabs.find((t) => t.id === tabId);
     if (!tab) return;
 
@@ -143,8 +151,8 @@
       return;
     }
 
-    // Make temporary tabs permanent when running a query
-    if (tab.temporary) {
+    // Make temporary tabs permanent only when the user manually runs a query
+    if (tab.temporary && manual) {
       makeTabPermanent(tabId);
     }
 

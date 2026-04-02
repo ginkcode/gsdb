@@ -30,18 +30,29 @@ pub async fn add_connection(
     connection: Connection,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let pool = DbPool::connect(&connection)
-        .await
-        .map_err(|e| e.to_string())?;
-
     let id = connection.id.clone();
+
+    // Store the connection config first (before attempting to connect)
+    // This ensures we can reconnect later even if the initial connection fails
     state
         .connections
         .lock()
         .await
-        .insert(id.clone(), connection);
-    state.pools.lock().await.insert(id, pool);
-    Ok(())
+        .insert(id.clone(), connection.clone());
+
+    // Now attempt to connect
+    match DbPool::connect(&connection).await {
+        Ok(pool) => {
+            state.pools.lock().await.insert(id, pool);
+            Ok(())
+        }
+        Err(e) => {
+            // Connection failed, but we keep the config stored for future reconnects
+            // Remove any existing pool entry
+            state.pools.lock().await.remove(&id);
+            Err(e.to_string())
+        }
+    }
 }
 
 #[tauri::command]
@@ -57,6 +68,15 @@ pub async fn reconnect_connection(
             .cloned()
             .ok_or_else(|| "Connection not found".to_string())?
     };
+
+    // Close the old pool if it exists (important for SQL Server single connections)
+    {
+        let pools = state.pools.lock().await;
+        if let Some(old_pool) = pools.get(&connection_id) {
+            // Close the old connection - ignore errors since we're reconnecting anyway
+            let _ = old_pool.close().await;
+        }
+    }
 
     // Create a new pool
     let pool = DbPool::connect(&connection)
