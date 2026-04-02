@@ -247,6 +247,8 @@
       name: name || `${driver}/${dbDisplayName}`,
       driver,
       color,
+      // Preserve locked state when editing, or default to true for new connections
+      locked: editing?.locked ?? true,
       database: driver === "sqlite" ? filePath || "sqlite" : database,
       ...(driver !== "sqlite" ? { host, port, username, password } : {}),
       ...(driver === "sqlite" ? { filePath } : {}),
