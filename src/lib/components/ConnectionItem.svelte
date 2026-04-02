@@ -13,6 +13,9 @@
     Loader,
     Database,
     Network,
+    Lock,
+    Unlock,
+    History,
   } from "@lucide/svelte";
   import type { Connection, TableInfo } from "$lib/types";
   import TableItem from "./TableItem.svelte";
@@ -49,6 +52,8 @@
     onReconnect: () => void;
     onRefreshTables: () => void;
     onRename: () => void;
+    onToggleLock: () => void;
+    onShowHistory: () => void;
     onExport: () => void;
     onImport: () => void;
     onChangeDatabase: () => void;
@@ -77,6 +82,8 @@
     onReconnect,
     onRefreshTables,
     onRename,
+    onToggleLock,
+    onShowHistory,
     onExport,
     onImport,
     onChangeDatabase,
@@ -136,6 +143,16 @@
       <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
     </svg>
     <span>Rename</span>
+  </Item>
+  <Item class="flex items-center gap-2 cursor-pointer" onclick={onToggleLock}>
+    {#if connection.locked}
+      <Unlock class="w-4 h-4" /><span>Unlock (Allow Writes)</span>
+    {:else}
+      <Lock class="w-4 h-4" /><span>Lock (Read Only)</span>
+    {/if}
+  </Item>
+  <Item class="flex items-center gap-2 cursor-pointer" onclick={onShowHistory}>
+    <History class="w-4 h-4" /><span>Query History</span>
   </Item>
   <Separator />
   {#if connection.driver !== "sqlite"}
@@ -199,6 +216,9 @@
         >
           {connection.name}
         </span>
+        {#if connection.locked}
+          <Lock class="w-3 h-3 shrink-0 text-amber-500" />
+        {/if}
       </button>
 
       <!-- New query tab button -->

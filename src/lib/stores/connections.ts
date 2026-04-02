@@ -177,6 +177,47 @@ export async function renameConnection(connId: string, newName: string): Promise
   });
 }
 
+// Toggle connection lock state
+export async function toggleConnectionLock(connId: string): Promise<void> {
+  connections.update((conns) => {
+    const updated = conns.map((c) => 
+      c.id === connId ? { ...c, locked: !c.locked } : c
+    );
+    saveConnections(updated);
+    return updated;
+  });
+}
+
+// Add a query to the connection's history (keeps last 1000 entries)
+export function addQueryHistory(
+  connId: string,
+  sql: string,
+  success: boolean,
+  error?: string,
+  rowsAffected?: number
+): void {
+  const MAX_HISTORY = 1000;
+  const entry: import("$lib/types").QueryHistoryEntry = {
+    sql,
+    timestamp: new Date().toISOString(),
+    success,
+    error,
+    rowsAffected,
+  };
+  
+  connections.update((conns) => {
+    const updated = conns.map((c) => {
+      if (c.id !== connId) return c;
+      const history = [...(c.queryHistory ?? []), entry];
+      // Keep only the last MAX_HISTORY entries
+      const trimmed = history.slice(-MAX_HISTORY);
+      return { ...c, queryHistory: trimmed };
+    });
+    saveConnections(updated);
+    return updated;
+  });
+}
+
 // Update an existing connection (reconnects to backend)
 export async function updateConnection(conn: Connection): Promise<void> {
   try {

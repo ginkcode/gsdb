@@ -5,7 +5,9 @@ use serde_json::Value;
 use sqlx::{Column, Row, TypeInfo};
 
 use super::driver::{DbError, Dialect, Driver};
-use super::types::{QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo};
+use super::types::{
+    QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo,
+};
 
 pub struct SqliteDriver(pub sqlx::SqlitePool);
 
@@ -67,11 +69,10 @@ impl Driver for SqliteDriver {
 
     async fn get_schema(&self) -> Result<SchemaGraph, DbError> {
         // Get all tables (not views)
-        let table_rows = sqlx::query(
-            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
-        )
-        .fetch_all(&self.0)
-        .await?;
+        let table_rows =
+            sqlx::query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+                .fetch_all(&self.0)
+                .await?;
 
         let table_names: Vec<String> = table_rows
             .iter()
@@ -102,7 +103,10 @@ impl Driver for SqliteDriver {
                 })
                 .collect();
 
-            tables.push(SchemaTable { name: tbl.clone(), columns });
+            tables.push(SchemaTable {
+                name: tbl.clone(),
+                columns,
+            });
 
             // PRAGMA foreign_key_list: (id, seq, table, from, to, ...)
             let fk_rows = sqlx::query(&format!(
@@ -126,7 +130,10 @@ impl Driver for SqliteDriver {
             }
         }
 
-        Ok(SchemaGraph { tables, foreign_keys })
+        Ok(SchemaGraph {
+            tables,
+            foreign_keys,
+        })
     }
 
     async fn get_table_definition(&self, table_name: &str) -> Result<String, DbError> {
@@ -157,10 +164,7 @@ impl Driver for SqliteDriver {
 
 // ── Low-level query helpers ───────────────────────────────────────────────────
 
-pub async fn sqlite_query(
-    pool: &sqlx::SqlitePool,
-    sql: &str,
-) -> Result<QueryResult, sqlx::Error> {
+pub async fn sqlite_query(pool: &sqlx::SqlitePool, sql: &str) -> Result<QueryResult, sqlx::Error> {
     let rows = sqlx::query(sql).fetch_all(pool).await?;
     if rows.is_empty() {
         return Ok(QueryResult {

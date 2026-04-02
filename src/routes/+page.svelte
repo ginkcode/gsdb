@@ -31,6 +31,7 @@
     renameConnection,
     updateConnection,
     makeTabPermanent,
+    addQueryHistory,
   } from "$lib/stores/connections";
   import type { Connection, QueryResult } from "$lib/types";
 
@@ -41,6 +42,7 @@
   let showDeleteDialog = $state(false);
   let renameValue = $state("");
   let selectedRow = $state<Record<string, unknown> | null>(null);
+  let selectedRowIndex = $state<number>(0);
   let showDetailPanel = $state(true);
   let isMaximized = $state(false);
   let currentPlatform = $state<"windows" | "macos" | "linux" | "unknown">(
@@ -104,20 +106,59 @@
     }
   }
 
+  /**
+   * Check if a SQL query is read-only (SELECT, SHOW, DESCRIBE, EXPLAIN, etc.)
+   * Returns true for safe read-only queries, false for write operations.
+   */
+  function isReadOnlyQuery(sql: string): boolean {
+    const normalizedSql = sql.trim().toUpperCase();
+    // Remove comments and leading whitespace
+    const cleanSql = normalizedSql
+      .replace(/--.*$/gm, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .trim();
+
+    // Read-only keywords
+    const readOnlyPatterns = [
+      /^SELECT\b/i,
+      /^SHOW\b/i,
+      /^DESCRIBE\b/i,
+      /^DESC\b/i,
+      /^EXPLAIN\b/i,
+      /^WITH\b/i, // CTE queries that start with WITH
+      /^\(?\s*SELECT\b/i, // Subqueries starting with SELECT
+    ];
+
+    return readOnlyPatterns.some((pattern) => pattern.test(cleanSql));
+  }
+
   async function runQuery(tabId: string, sql: string) {
     const tab = $queryTabs.find((t) => t.id === tabId);
     if (!tab) return;
+
+    // Check if connection is locked and query is not read-only
+    const conn = $connections.find((c) => c.id === tab.connectionId);
+    if (conn?.locked && !isReadOnlyQuery(sql)) {
+      toast.error("Connection is locked", {
+        description:
+          "This connection is in read-only mode. Only SELECT queries are allowed. Unlock the connection to make changes.",
+      });
+      return;
+    }
 
     // Make temporary tabs permanent when running a query
     if (tab.temporary) {
       makeTabPermanent(tabId);
     }
 
+    // Clean up SQL - trim and remove trailing semicolon for PostgreSQL compatibility
+    const cleanSql = sql.trim().replace(/;+\s*$/, "");
+
     updateTab(tabId, { isLoading: true, result: undefined });
     try {
       const result: QueryResult = await invoke("run_query", {
         connectionId: tab.connectionId,
-        sql,
+        sql: cleanSql,
       });
       // Enrich column nullability from schema when the tab is a table view
       if (tab.title !== "Query" && result.columns.length > 0) {
@@ -133,12 +174,23 @@
           // schema lookup failed — leave as default (all nullable)
         }
       }
-      updateTab(tabId, { result, isLoading: false });
+      // Store the last executed SQL for refreshing after updates
+      updateTab(tabId, { result, isLoading: false, lastExecutedSql: cleanSql });
+      // Log successful query to history
+      addQueryHistory(
+        tab.connectionId,
+        cleanSql,
+        true,
+        undefined,
+        result.rowsAffected ?? result.rows?.length,
+      );
     } catch (err) {
       updateTab(tabId, {
         result: { columns: [], rows: [], error: String(err) },
         isLoading: false,
       });
+      // Log failed query to history
+      addQueryHistory(tab.connectionId, cleanSql, false, String(err));
     }
   }
 
@@ -166,6 +218,14 @@
   function handleRowSelect(row: Record<string, unknown>) {
     selectedRow = row;
     showDetailPanel = true;
+    // Find the index of the selected row
+    const tab = $activeTab;
+    if (tab?.result?.rows) {
+      const idx = tab.result.rows.findIndex((r) => r === row);
+      if (idx >= 0) {
+        selectedRowIndex = idx;
+      }
+    }
   }
 
   function handleCloseDetailPanel() {
@@ -173,16 +233,31 @@
     selectedRow = null;
   }
 
-  // When switching tabs, update selectedRow to the first row of the new tab's results
+  // When switching tabs or refreshing results, preserve the selected row by index
   $effect(() => {
     const tab = $activeTab;
     if (tab?.result?.rows && tab.result.rows.length > 0) {
-      selectedRow = tab.result.rows[0];
+      // Preserve the selected row by index if possible
+      if (selectedRowIndex < tab.result.rows.length) {
+        selectedRow = tab.result.rows[selectedRowIndex];
+      } else {
+        // Index out of bounds, select first row
+        selectedRow = tab.result.rows[0];
+        selectedRowIndex = 0;
+      }
     } else {
       // No rows in the current tab, hide the detail panel
       selectedRow = null;
       showDetailPanel = false;
     }
+  });
+
+  // Reset selected row index when switching tabs
+  $effect(() => {
+    // Track activeTabId changes
+    const tabId = $activeTabId;
+    // Reset to first row when tab changes
+    selectedRowIndex = 0;
   });
 
   let columns = $derived($activeTab?.result?.columns ?? []);
@@ -254,9 +329,30 @@
                 tableName={$activeTab?.title !== "Query"
                   ? $activeTab?.title
                   : undefined}
+                driver={$connections.find(
+                  (c) => c.id === $activeTab?.connectionId,
+                )?.driver ?? "postgres"}
+                locked={$connections.find(
+                  (c) => c.id === $activeTab?.connectionId,
+                )?.locked ?? false}
                 onClose={handleCloseDetailPanel}
                 onUpdateSuccess={() => {
-                  if ($activeTab) runQuery($activeTab.id, $activeTab.sql);
+                  if ($activeTab) {
+                    // Use the last executed SQL for refreshing, not the current editor content
+                    const refreshSql =
+                      $activeTab.lastExecutedSql ?? $activeTab.sql;
+                    runQuery($activeTab.id, refreshSql);
+                  }
+                }}
+                onQueryExecuted={(sql, success, error) => {
+                  if ($activeTab) {
+                    addQueryHistory(
+                      $activeTab.connectionId,
+                      sql,
+                      success,
+                      error,
+                    );
+                  }
                 }}
               />
             </ResizablePrimitive.Pane>

@@ -9,6 +9,7 @@
   import { downloadDir } from "@tauri-apps/api/path";
   import { Button } from "$lib/components/ui/button";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
+  import * as Dialog from "$lib/components/ui/dialog";
   import {
     connections,
     activeConnectionId,
@@ -21,6 +22,7 @@
     updateConnection,
     closeTabsByConnection,
     openDiagramTab,
+    toggleConnectionLock,
   } from "$lib/stores/connections";
   import type { Connection, TableInfo, QueryTab } from "$lib/types";
   import ConnectionItem from "./ConnectionItem.svelte";
@@ -29,6 +31,7 @@
   import TableInfoDialog from "./TableInfoDialog.svelte";
   import ChangeDatabaseDialog from "./ChangeDatabaseDialog.svelte";
   import DiagramPickerDialog from "./DiagramPickerDialog.svelte";
+  import QueryHistoryDialog from "./QueryHistoryDialog.svelte";
 
   let {
     onEditConnection,
@@ -89,6 +92,14 @@
   let tableInfoDefinition = $state("");
   let tableInfoLoading = $state(false);
 
+  // Unlock confirmation dialog state
+  let unlockDialogOpen = $state(false);
+  let unlockDialogConnection = $state<Connection | null>(null);
+
+  // Query history dialog state
+  let queryHistoryDialogOpen = $state(false);
+  let queryHistoryConnection = $state<Connection | null>(null);
+
   const driverLabel: Record<string, string> = {
     postgres: "PG",
     mysql: "MY",
@@ -99,10 +110,10 @@
   // Generate a SELECT query with limit, using dialect-appropriate syntax
   function selectQuery(driver: string, table: string, limit = 100): string {
     if (driver === "sqlserver") {
-      return `SELECT TOP ${limit} * FROM [${table}];`;
+      return `SELECT TOP ${limit} * FROM [${table}]`;
     }
     const quoted = driver === "mysql" ? `\`${table}\`` : `"${table}"`;
-    return `SELECT * FROM ${quoted} LIMIT ${limit};`;
+    return `SELECT * FROM ${quoted} LIMIT ${limit}`;
   }
 
   async function toggleConnection(connId: string) {
@@ -224,6 +235,38 @@
     changeDatabaseDialogOpen = true;
   }
 
+  function handleToggleLock(conn: Connection) {
+    if (conn.locked) {
+      // Show confirmation dialog before unlocking
+      unlockDialogConnection = conn;
+      unlockDialogOpen = true;
+    } else {
+      // Lock immediately without confirmation
+      toggleConnectionLock(conn.id);
+    }
+  }
+
+  function confirmUnlock() {
+    if (unlockDialogConnection) {
+      toggleConnectionLock(unlockDialogConnection.id);
+      unlockDialogConnection = null;
+    }
+    unlockDialogOpen = false;
+  }
+
+  function openQueryHistory(conn: Connection) {
+    queryHistoryConnection = conn;
+    queryHistoryDialogOpen = true;
+  }
+
+  function handleSelectHistoryQuery(sql: string) {
+    if (queryHistoryConnection) {
+      activeConnectionId.set(queryHistoryConnection.id);
+      addTab(queryHistoryConnection.id, sql);
+      queryHistoryDialogOpen = false;
+    }
+  }
+
   async function handleChangeDatabase(database: string) {
     if (!changeDatabaseConnection) return;
     const updated = {
@@ -258,6 +301,16 @@
     tableKind: "table" | "view",
     driver: string,
   ) {
+    // Check if connection is locked
+    const conn = $connections.find((c) => c.id === connId);
+    if (conn?.locked) {
+      toast.error("Connection is locked", {
+        description:
+          "This connection is in read-only mode. Unlock the connection to make changes.",
+      });
+      return;
+    }
+
     const q = driver === "mysql" ? `\`${tableName}\`` : `"${tableName}"`;
     let sql: string;
     if (type === "delete") {
@@ -360,6 +413,16 @@
   let importLoading = $state(false);
 
   async function importSql(connId: string) {
+    // Check if connection is locked
+    const conn = $connections.find((c) => c.id === connId);
+    if (conn?.locked) {
+      toast.error("Connection is locked", {
+        description:
+          "This connection is in read-only mode. Unlock the connection to import data.",
+      });
+      return;
+    }
+
     const filePath = await open({
       filters: [{ name: "SQL Files", extensions: ["sql"] }],
       multiple: false,
@@ -458,6 +521,8 @@
         onReconnect={() => handleReconnect(conn)}
         onRefreshTables={() => refreshTables(conn.id)}
         onRename={() => onRenameConnection(conn)}
+        onToggleLock={() => handleToggleLock(conn)}
+        onShowHistory={() => openQueryHistory(conn)}
         onExport={() => exportDatabase(conn)}
         onImport={() => importSql(conn.id)}
         onChangeDatabase={() => openChangeDatabase(conn)}
@@ -536,6 +601,35 @@
     definition={tableInfoDefinition}
     loading={tableInfoLoading}
     onClose={() => (tableInfoOpen = false)}
+  />
+
+  <!-- Unlock Confirmation Dialog -->
+  <Dialog.Root bind:open={unlockDialogOpen}>
+    <Dialog.Content class="sm:max-w-md">
+      <Dialog.Header>
+        <Dialog.Title>Unlock Connection</Dialog.Title>
+        <Dialog.Description>
+          This will allow write operations on <strong
+            >{unlockDialogConnection?.name ?? "this connection"}</strong
+          >. Are you sure you want to enable write access?
+        </Dialog.Description>
+      </Dialog.Header>
+      <Dialog.Footer>
+        <Button variant="outline" onclick={() => (unlockDialogOpen = false)}>
+          Cancel
+        </Button>
+        <Button onclick={confirmUnlock}>Unlock</Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <!-- Query History Dialog -->
+  <QueryHistoryDialog
+    open={queryHistoryDialogOpen}
+    connectionName={queryHistoryConnection?.name ?? ""}
+    history={queryHistoryConnection?.queryHistory ?? []}
+    onSelect={handleSelectHistoryQuery}
+    onClose={() => (queryHistoryDialogOpen = false)}
   />
 
   {#if appVersion}

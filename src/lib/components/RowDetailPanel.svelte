@@ -5,6 +5,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { untrack } from "svelte";
   import { toast } from "svelte-sonner";
+  import type { DbDriver } from "$lib/types";
 
   let {
     row,
@@ -13,8 +14,11 @@
     columnNullable = [],
     connectionId,
     tableName,
+    driver = "postgres",
+    locked = false,
     onClose,
     onUpdateSuccess,
+    onQueryExecuted,
   }: {
     row: Record<string, unknown> | null;
     columns: string[];
@@ -22,8 +26,11 @@
     columnNullable?: boolean[];
     connectionId?: string;
     tableName?: string;
+    driver?: DbDriver;
+    locked?: boolean;
     onClose: () => void;
     onUpdateSuccess?: () => void;
+    onQueryExecuted?: (sql: string, success: boolean, error?: string) => void;
   } = $props();
 
   let copiedColumn = $state<string | null>(null);
@@ -33,10 +40,12 @@
   let nullFields = $state<Record<string, boolean>>({});
   let isUpdating = $state(false);
 
+  // Reset state when row changes (including after a refresh)
   $effect(() => {
-    const currentRow = row;
+    // Track row by creating a new reference when it changes
+    const currentRow = row ? { ...row } : null;
     untrack(() => {
-      baseRow = currentRow ? { ...currentRow } : null;
+      baseRow = currentRow;
       const initial: Record<string, string> = {};
       const initialNull: Record<string, boolean> = {};
       if (currentRow) {
@@ -56,6 +65,19 @@
     if (value === null || value === undefined) return "";
     if (typeof value === "object") return JSON.stringify(value, null, 2);
     return String(value);
+  }
+
+  // Quote identifier based on database driver
+  function quoteIdentifier(name: string): string {
+    switch (driver) {
+      case "mysql":
+        return `\`${name.replace(/`/g, "``")}\``;
+      case "sqlserver":
+        return `[${name.replace(/]/g, "]]")}]`;
+      default:
+        // postgres, sqlite use double quotes
+        return `"${name.replace(/"/g, '""')}"`;
+    }
   }
 
   function setNull(col: string) {
@@ -120,7 +142,9 @@
   }
 
   const fieldErrors = $derived(
-    Object.fromEntries(columns.map((col) => [col, isChanged(col) ? validateField(col) : null])),
+    Object.fromEntries(
+      columns.map((col) => [col, isChanged(col) ? validateField(col) : null]),
+    ),
   );
 
   const hasValidationErrors = $derived(
@@ -143,9 +167,13 @@
     }
     if (typeof originalValue === "number") {
       const n = Number(editedValue);
-      return Number.isFinite(n) ? String(n) : `'${editedValue.replace(/'/g, "''")}'`;
+      return Number.isFinite(n)
+        ? String(n)
+        : `'${editedValue.replace(/'/g, "''")}'`;
     }
-    return `'${editedValue.replace(/'/g, "''")}'`;
+    // Escape single quotes and backslashes for SQL string literals
+    const escaped = editedValue.replace(/\\/g, "\\\\").replace(/'/g, "''");
+    return `'${escaped}'`;
   }
 
   // Converts an original value to a SQL literal for the WHERE clause
@@ -153,25 +181,40 @@
     if (value === null || value === undefined) return "NULL";
     if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
     if (typeof value === "number") return String(value);
-    if (typeof value === "object") return `'${JSON.stringify(value).replace(/'/g, "''")}'`;
-    return `'${String(value).replace(/'/g, "''")}'`;
+    if (typeof value === "object") {
+      // For objects, JSON stringify and escape properly
+      const jsonStr = JSON.stringify(value);
+      const escaped = jsonStr.replace(/\\/g, "\\\\").replace(/'/g, "''");
+      return `'${escaped}'`;
+    }
+    // Escape single quotes and backslashes for SQL string literals
+    const escaped = String(value).replace(/\\/g, "\\\\").replace(/'/g, "''");
+    return `'${escaped}'`;
   }
 
   async function handleUpdate() {
+    if (locked) {
+      toast.error("Connection is locked", {
+        description:
+          "This connection is in read-only mode. Unlock the connection to make changes.",
+      });
+      return;
+    }
     if (!row || !connectionId || !tableName) return;
     isUpdating = true;
 
     const changedCols = columns.filter((col) => isChanged(col));
     const setClauses = changedCols.map(
-      (col) => `"${col}" = ${toSqlLiteral(col, baseRow![col])}`,
+      (col) => `${quoteIdentifier(col)} = ${toSqlLiteral(col, baseRow![col])}`,
     );
     const whereClauses = columns.map((col) => {
       const val = baseRow![col];
-      if (val === null || val === undefined) return `"${col}" IS NULL`;
-      return `"${col}" = ${toWhereLiteral(val)}`;
+      if (val === null || val === undefined)
+        return `${quoteIdentifier(col)} IS NULL`;
+      return `${quoteIdentifier(col)} = ${toWhereLiteral(val)}`;
     });
 
-    const sql = `UPDATE "${tableName}" SET ${setClauses.join(", ")} WHERE ${whereClauses.join(" AND ")}`;
+    const sql = `UPDATE ${quoteIdentifier(tableName)} SET ${setClauses.join(", ")} WHERE ${whereClauses.join(" AND ")}`;
 
     try {
       await invoke("run_query", { connectionId, sql });
@@ -179,9 +222,11 @@
         baseRow![col] = nullFields[col] ? null : editedValues[col];
       }
       toast.success("Row updated successfully");
+      onQueryExecuted?.(sql, true);
       onUpdateSuccess?.();
     } catch (err) {
       toast.error(String(err));
+      onQueryExecuted?.(sql, false, String(err));
     } finally {
       isUpdating = false;
     }
@@ -198,8 +243,12 @@
   }
 </script>
 
-<div class="h-full flex flex-col overflow-hidden border-l border-border bg-background">
-  <div class="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+<div
+  class="h-full flex flex-col overflow-hidden border-l border-border bg-background"
+>
+  <div
+    class="flex items-center justify-between px-4 py-3 border-b border-border shrink-0"
+  >
     <h3 class="text-sm font-semibold">Row Details</h3>
     <Button variant="ghost" size="icon" class="h-7 w-7" onclick={onClose}>
       <X class="w-4 h-4" />
@@ -215,9 +264,10 @@
           {@const changed = isChanged(col)}
           {@const error = fieldErrors[col]}
           {@const isNull = nullFields[col] ?? false}
-          {@const nullable = columnNullable.length > 0 ? (columnNullable[colIdx] ?? true) : true}
+          {@const nullable =
+            columnNullable.length > 0 ? (columnNullable[colIdx] ?? true) : true}
           {@const multiline = !isNull && isMultiline(value)}
-          {@const inputClass = `w-full text-sm font-mono bg-muted/50 rounded px-3 py-2 outline-none transition-colors border focus:border-border ${error ? 'border-destructive/70' : changed ? 'border-amber-500/60' : 'border-transparent'}`}
+          {@const inputClass = `w-full text-sm font-mono bg-muted/50 rounded px-3 py-2 outline-none transition-colors border focus:border-border ${error ? "border-destructive/70" : changed ? "border-amber-500/60" : "border-transparent"}`}
 
           <div class="space-y-1.5">
             <div class="flex items-center justify-between">
@@ -230,7 +280,9 @@
                 {/if}
               </span>
               <div class="flex items-center gap-1">
-                <span class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                <span
+                  class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
+                >
                   {valueType}
                 </span>
                 {#if nullable && !isNull}
@@ -238,14 +290,18 @@
                     type="button"
                     class="text-[10px] px-1.5 py-0.5 rounded border border-dashed border-muted-foreground/40 text-muted-foreground hover:border-destructive/60 hover:text-destructive transition-colors"
                     onclick={() => setNull(col)}
-                    title="Set to NULL"
-                  >NULL</button>
+                    title="Set to NULL">NULL</button
+                  >
                 {/if}
                 <Button
                   variant="ghost"
                   size="icon"
                   class="h-6 w-6"
-                  onclick={() => copyToClipboard(isNull ? "NULL" : (editedValues[col] ?? ""), col)}
+                  onclick={() =>
+                    copyToClipboard(
+                      isNull ? "NULL" : (editedValues[col] ?? ""),
+                      col,
+                    )}
                   title="Copy value"
                 >
                   {#if copiedColumn === col}
@@ -259,21 +315,26 @@
 
             {#if isNull}
               <div class="flex items-center gap-2">
-                <span class="text-sm font-mono px-3 py-2 rounded bg-muted/50 border border-transparent text-muted-foreground italic select-none flex-1">
+                <span
+                  class="text-sm font-mono px-3 py-2 rounded bg-muted/50 border border-transparent text-muted-foreground italic select-none flex-1"
+                >
                   NULL
                 </span>
                 <button
                   type="button"
                   class="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 shrink-0"
-                  onclick={() => unsetNull(col)}
-                >Set value</button>
+                  onclick={() => unsetNull(col)}>Set value</button
+                >
               </div>
             {:else if multiline}
               <textarea
                 class="{inputClass} break-all resize-y min-h-16 max-h-48"
                 value={editedValues[col] ?? ""}
                 oninput={(e) => (editedValues[col] = e.currentTarget.value)}
-                rows={Math.min(6, (editedValues[col] ?? "").split("\n").length + 1)}
+                rows={Math.min(
+                  6,
+                  (editedValues[col] ?? "").split("\n").length + 1,
+                )}
               ></textarea>
             {:else}
               <input
@@ -301,7 +362,9 @@
       </div>
     {/if}
   {:else}
-    <div class="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+    <div
+      class="flex-1 flex items-center justify-center text-sm text-muted-foreground"
+    >
       <p>Select a row to view details</p>
     </div>
   {/if}

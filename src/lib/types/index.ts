@@ -34,11 +34,21 @@ export interface SshTunnel {
   privateKeyPassphrase?: string;
 }
 
+export interface QueryHistoryEntry {
+  sql: string;
+  timestamp: string; // ISO string
+  success: boolean;
+  error?: string;
+  rowsAffected?: number;
+}
+
 export interface Connection {
   id: string;
   name: string;
   driver: DbDriver;
   color?: string; // Label color
+  locked?: boolean; // When true, only SELECT queries are allowed
+  queryHistory?: QueryHistoryEntry[]; // Last 1000 executed queries
   host?: string;
   port?: number;
   database: string;
@@ -69,6 +79,7 @@ export interface QueryTab {
   title: string;
   kind?: "query" | "diagram"; // defaults to "query" when absent
   sql: string;
+  lastExecutedSql?: string; // The last executed query (for refreshing after updates)
   result?: QueryResult;
   isLoading: boolean;
   temporary?: boolean; // preview tab opened by single click; replaced on next single click
