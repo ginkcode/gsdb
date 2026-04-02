@@ -69,14 +69,26 @@
     try {
       const res = await fetch(
         "https://api.github.com/repos/ginkcode/gsdb/releases/latest",
+        {
+          headers: {
+            Accept: "application/vnd.github.v3+json",
+            "User-Agent": "GSDB-App",
+          },
+        },
       );
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.error("[Update] GitHub API error:", res.status, res.statusText);
+        return;
+      }
       const data = await res.json();
       const latest = String(data.tag_name ?? "").replace(/^v/, "");
+      console.log("[Update] Current:", v, "Latest:", latest);
       if (latest && isNewerVersion(latest, v)) {
+        console.log("[Update] Update available!");
         updateAvailable = true;
       }
-    } catch {
+    } catch (err) {
+      console.error("[Update] Failed to check for updates:", err);
       // silently ignore — no network or rate limit
     }
   });
