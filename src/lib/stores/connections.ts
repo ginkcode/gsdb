@@ -37,9 +37,20 @@ async function getStore(): Promise<Store> {
   return store;
 }
 
-// Generate a unique key for storing password in keyring
-function getPasswordKey(connectionId: string): string {
-  return `connection-${connectionId}`;
+// Keyring key helpers
+function keyDbPassword(id: string)      { return `connection-${id}`; }
+function keySshPassword(id: string)     { return `connection-${id}-ssh-password`; }
+function keySshKey(id: string)          { return `connection-${id}-ssh-key`; }
+function keySshPassphrase(id: string)   { return `connection-${id}-ssh-passphrase`; }
+
+async function getSecret(key: string): Promise<string | undefined> {
+  try { return (await getPassword(KEYRING_SERVICE, key)) || undefined; } catch { return undefined; }
+}
+async function setOrDelete(key: string, value: string | undefined): Promise<void> {
+  try {
+    if (value) { await setPassword(KEYRING_SERVICE, key, value); }
+    else { await deletePassword(KEYRING_SERVICE, key).catch(() => {}); }
+  } catch (err) { console.error(`[Keyring] Failed for key ${key}:`, err); }
 }
 
 // Load saved connections from store and retrieve passwords from keyring
@@ -50,24 +61,13 @@ export async function loadSavedConnections(): Promise<Connection[]> {
     console.log("[Connections] Loaded from store:", saved);
     
     if (saved && saved.length > 0) {
-      // Retrieve passwords from keyring
+      // Retrieve all secrets from keyring
       const connectionsWithPasswords = await Promise.all(
-        saved.map(async (conn) => {
-          try {
-            const password = await getPassword(KEYRING_SERVICE, getPasswordKey(conn.id));
-            console.log(`[Connections] Retrieved password for ${conn.name}:`, password ? 'found' : 'empty');
-            return { ...conn, password: password || undefined };
-          } catch (err) {
-            // Password not found in keyring (first time or deleted)
-            // On Linux, this can also happen if keyring service is not available
-            console.warn(`[Connections] Could not retrieve password for ${conn.name}:`, err);
-            return { ...conn, password: undefined };
-          }
-        })
+        saved.map((conn) => loadConnectionSecrets(conn))
       );
-      
+
       connections.set(connectionsWithPasswords);
-      console.log("[Connections] Restored connections:", connectionsWithPasswords);
+      console.log("[Connections] Restored connections:", connectionsWithPasswords.length);
       
       // Reconnect each connection to the backend
       for (const conn of connectionsWithPasswords) {
@@ -104,80 +104,78 @@ export async function loadSavedConnections(): Promise<Connection[]> {
   return [];
 }
 
-// Save connections to store and passwords to keyring
-export async function saveConnections(conns: Connection[]): Promise<void> {
+// Save connection metadata to disk only — never touches keyring
+async function saveConnectionMetadata(conns: Connection[]): Promise<void> {
   try {
     const s = await getStore();
-    
-    // Save connection metadata (without passwords) to store
-    const connectionsWithoutPasswords = conns.map((conn) => ({
+    const stripped = conns.map((conn) => ({
       ...conn,
       password: undefined,
+      ssh: conn.ssh ? { ...conn.ssh, password: undefined, privateKey: undefined, privateKeyPassphrase: undefined } : undefined,
     }));
-    
-    console.log("[Connections] Saving:", connectionsWithoutPasswords);
-    await s.set(CONNECTIONS_STORE_KEY, connectionsWithoutPasswords);
+    await s.set(CONNECTIONS_STORE_KEY, stripped);
     await s.save();
-    
-    // Save passwords to keyring
-    for (const conn of conns) {
-      const passwordKey = getPasswordKey(conn.id);
-      if (conn.password) {
-        try {
-          console.log(`[Connections] Saving password for ${conn.id}...`);
-          await setPassword(KEYRING_SERVICE, passwordKey, conn.password);
-          console.log(`[Connections] Password saved for ${conn.id}`);
-        } catch (err) {
-          console.error(`[Connections] Failed to save password for ${conn.id}:`, err);
-        }
-      } else {
-        // Remove password from keyring if it was cleared
-        try {
-          await deletePassword(KEYRING_SERVICE, passwordKey);
-        } catch {
-          // Password might not exist, ignore
-        }
-      }
-    }
-    
-    console.log("[Connections] Saved successfully");
   } catch (err) {
-    console.error("[Connections] Failed to save connections:", err);
+    console.error("[Connections] Failed to save metadata:", err);
   }
+}
+
+// Save all secrets for a single connection to keyring
+async function saveConnectionSecrets(conn: Connection): Promise<void> {
+  await setOrDelete(keyDbPassword(conn.id), conn.password);
+  await setOrDelete(keySshPassword(conn.id), conn.ssh?.password);
+  await setOrDelete(keySshKey(conn.id), conn.ssh?.privateKey);
+  await setOrDelete(keySshPassphrase(conn.id), conn.ssh?.privateKeyPassphrase);
+}
+
+// Remove all secrets for a single connection from keyring
+async function deleteConnectionSecrets(connId: string): Promise<void> {
+  await setOrDelete(keyDbPassword(connId), undefined);
+  await setOrDelete(keySshPassword(connId), undefined);
+  await setOrDelete(keySshKey(connId), undefined);
+  await setOrDelete(keySshPassphrase(connId), undefined);
+}
+
+// Load all secrets for a single connection from keyring
+async function loadConnectionSecrets(conn: Connection): Promise<Connection> {
+  const password = await getSecret(keyDbPassword(conn.id));
+  const sshPassword = await getSecret(keySshPassword(conn.id));
+  const sshKey = await getSecret(keySshKey(conn.id));
+  const sshPassphrase = await getSecret(keySshPassphrase(conn.id));
+  return {
+    ...conn,
+    password,
+    ssh: conn.ssh ? { ...conn.ssh, password: sshPassword, privateKey: sshKey, privateKeyPassphrase: sshPassphrase } : conn.ssh,
+  };
 }
 
 // Add a new connection and persist it
 export async function addConnection(conn: Connection): Promise<void> {
   connections.update((conns) => {
     const updated = [...conns, conn];
-    saveConnections(updated);
+    saveConnectionMetadata(updated);
     return updated;
   });
+  await saveConnectionSecrets(conn);
 }
 
 // Remove a connection and its password
 export async function removeConnection(connId: string): Promise<void> {
   connections.update((conns) => {
     const updated = conns.filter((c) => c.id !== connId);
-    saveConnections(updated);
+    saveConnectionMetadata(updated);
     return updated;
   });
-  
-  // Also remove password from keyring
-  try {
-    await deletePassword(KEYRING_SERVICE, getPasswordKey(connId));
-  } catch {
-    // Password might not exist, ignore
-  }
+  await deleteConnectionSecrets(connId);
 }
 
 // Rename a connection
 export async function renameConnection(connId: string, newName: string): Promise<void> {
   connections.update((conns) => {
-    const updated = conns.map((c) => 
+    const updated = conns.map((c) =>
       c.id === connId ? { ...c, name: newName } : c
     );
-    saveConnections(updated);
+    saveConnectionMetadata(updated);
     return updated;
   });
 }
@@ -185,10 +183,10 @@ export async function renameConnection(connId: string, newName: string): Promise
 // Toggle connection lock state
 export async function toggleConnectionLock(connId: string): Promise<void> {
   connections.update((conns) => {
-    const updated = conns.map((c) => 
+    const updated = conns.map((c) =>
       c.id === connId ? { ...c, locked: !c.locked } : c
     );
-    saveConnections(updated);
+    saveConnectionMetadata(updated);
     return updated;
   });
 }
@@ -218,7 +216,7 @@ export function addQueryHistory(
       const trimmed = history.slice(-MAX_HISTORY);
       return { ...c, queryHistory: trimmed };
     });
-    saveConnections(updated);
+    saveConnectionMetadata(updated);
     return updated;
   });
 }
@@ -231,12 +229,13 @@ export async function updateConnection(conn: Connection): Promise<void> {
     
     // Update the store
     connections.update((conns) => {
-      const updated = conns.map((c) => 
+      const updated = conns.map((c) =>
         c.id === conn.id ? conn : c
       );
-      saveConnections(updated);
+      saveConnectionMetadata(updated);
       return updated;
     });
+    await saveConnectionSecrets(conn);
     
     console.log(`[Connections] Updated: ${conn.name}`);
   } catch (err) {
