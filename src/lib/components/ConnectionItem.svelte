@@ -49,7 +49,7 @@
     onToggle: () => void;
     onNewQuery: () => void;
     onEdit: () => void;
-    onReconnect: () => void;
+    onReconnect: () => Promise<boolean>;
     onRefreshTables: () => void;
     onToggleLock: () => void;
     onShowHistory: () => void;
@@ -99,8 +99,15 @@
     onDropTable,
   }: Props = $props();
 
+  let dropdownOpen = $state(false);
+
   function getLabelColor(conn: Connection): string {
     return colorClasses[conn.color ?? "blue"] ?? colorClasses.blue;
+  }
+
+  async function handleReconnect() {
+    const success = await onReconnect();
+    if (success) dropdownOpen = false;
   }
 </script>
 
@@ -110,7 +117,7 @@
   </Item>
   <Item
     class="flex items-center gap-2 cursor-pointer"
-    onclick={onReconnect}
+    onclick={handleReconnect}
     disabled={isReconnecting}
   >
     <RefreshCw class="w-4 h-4 {isReconnecting ? 'animate-spin' : ''}" />
@@ -233,7 +240,7 @@
       </button>
 
       <!-- Three-dot dropdown -->
-      <DropdownMenu.Root>
+      <DropdownMenu.Root bind:open={dropdownOpen}>
         <DropdownMenu.Trigger>
           <button
             class="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-muted-foreground/20 transition-all"

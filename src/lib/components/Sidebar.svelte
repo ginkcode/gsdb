@@ -163,7 +163,7 @@
     }
   }
 
-  async function refreshTables(connId: string) {
+  export async function refreshTables(connId: string) {
     loadingTables = new Set([...loadingTables, connId]);
     try {
       const tables: TableInfo[] = await invoke("list_tables", {
@@ -177,17 +177,21 @@
     }
   }
 
-  async function handleReconnect(conn: Connection) {
+  async function handleReconnect(conn: Connection): Promise<boolean> {
     reconnectingConnections = new Set([...reconnectingConnections, conn.id]);
     try {
       await reconnectConnection(conn.id);
-      // Clear cached tables after reconnecting
+      // Clear cached tables and always expand after reconnecting
       const { [conn.id]: _, ...rest } = connectionTables;
       connectionTables = rest;
-      await toggleConnection(conn.id);
+      activeConnectionId.set(conn.id);
+      expandedConnections = new Set([...expandedConnections, conn.id]);
+      await refreshTables(conn.id);
+      return true;
     } catch (err) {
       console.error("Failed to reconnect:", err);
       alert(`Failed to reconnect: ${err}`);
+      return false;
     } finally {
       reconnectingConnections = new Set(
         [...reconnectingConnections].filter((id) => id !== conn.id),

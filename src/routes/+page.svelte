@@ -34,6 +34,7 @@
   } from "$lib/stores/connections";
   import type { Connection, QueryResult } from "$lib/types";
 
+  let sidebar = $state<Sidebar | null>(null);
   let showConnectionForm = $state(false);
   let editingConnection = $state<Connection | null>(null);
   let deletingConnection = $state<Connection | null>(null);
@@ -89,6 +90,7 @@
     try {
       if (editingConnection) {
         await updateConnection(conn);
+        sidebar?.refreshTables(conn.id);
         editingConnection = null;
       } else {
         await invoke("add_connection", { connection: conn });
@@ -279,6 +281,7 @@
     <!-- Sidebar -->
     <ResizablePrimitive.Pane defaultSize={22} minSize={10} maxSize={35}>
       <Sidebar
+        bind:this={sidebar}
         onEditConnection={handleEditConnection}
         onDeleteConnection={handleDeleteConnection}
         onNewConnection={handleNewConnection}
