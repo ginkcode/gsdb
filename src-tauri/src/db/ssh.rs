@@ -1,194 +1,139 @@
-use ssh2::Session;
-use std::net::TcpStream;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+
+use russh::client;
+use russh::keys::{decode_secret_key, key::PrivateKeyWithHashAlg};
+use tokio::net::TcpListener;
 
 use super::types::SshConfig;
 
-/// Active SSH tunnel that keeps the session alive
+// ── SSH client handler ────────────────────────────────────────────────────────
+
+struct AcceptAllKeys;
+
+impl client::Handler for AcceptAllKeys {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        _key: &russh::keys::ssh_key::PublicKey,
+    ) -> Result<bool, Self::Error> {
+        // Accept all host keys.
+        // TODO: validate against known_hosts for production security.
+        Ok(true)
+    }
+}
+
+// ── Public tunnel handle ──────────────────────────────────────────────────────
+
 pub struct SshTunnel {
-    #[allow(dead_code)]
-    session: Arc<Mutex<Option<Session>>>,
     local_port: u16,
 }
 
 impl SshTunnel {
-    /// Create an SSH tunnel and return the local port
-    pub fn create(ssh: &SshConfig, target_host: &str, target_port: u16) -> Result<Self, String> {
-        // Connect to SSH server
-        let ssh_addr = format!("{}:{}", ssh.host, ssh.port);
-        let tcp = TcpStream::connect(&ssh_addr)
-            .map_err(|e| format!("Failed to connect to SSH server {}: {}", ssh_addr, e))?;
-        tcp.set_nonblocking(false)
-            .map_err(|e| format!("Failed to set blocking mode: {}", e))?;
+    /// Connects to the SSH server, authenticates, binds a local listener, and
+    /// spawns an async task that forwards each accepted TCP connection through
+    /// a direct-tcpip SSH channel to `target_host:target_port`.
+    ///
+    /// Pure async — no blocking threads, no non-blocking mode switching.
+    /// Works correctly on Windows because russh is pure Rust with tokio I/O.
+    pub async fn create(
+        ssh: &SshConfig,
+        target_host: &str,
+        target_port: u16,
+    ) -> Result<Self, String> {
+        let config = Arc::new(client::Config {
+            nodelay: true,
+            ..Default::default()
+        });
 
-        let mut session =
-            Session::new().map_err(|e| format!("Failed to create SSH session: {}", e))?;
-        // 30-second timeout on all blocking libssh2 calls (handshake, auth,
-        // channel open). Prevents infinite hangs on Windows where
-        // channel_direct_tcpip can block forever if the server is slow.
-        session.set_timeout(30_000);
-        session.set_tcp_stream(tcp);
-        session
-            .handshake()
-            .map_err(|e| format!("SSH handshake failed: {}", e))?;
+        // Connect to the SSH server
+        let mut handle = client::connect(config, (ssh.host.as_str(), ssh.port), AcceptAllKeys)
+            .await
+            .map_err(|e| format!("SSH connect failed: {}", e))?;
 
         // Authenticate
         if let Some(password) = &ssh.password {
-            session
-                .userauth_password(&ssh.username, password)
+            let result = handle
+                .authenticate_password(&ssh.username, password)
+                .await
                 .map_err(|e| format!("SSH password authentication failed: {}", e))?;
-        } else if let Some(private_key) = &ssh.private_key {
+            if !result.success() {
+                return Err("SSH password authentication rejected by server".to_string());
+            }
+        } else if let Some(key_str) = &ssh.private_key {
             let passphrase = ssh.private_key_passphrase.as_deref();
-            // Try in-memory auth first: avoids filesystem encoding issues on Windows
-            // (libssh2's file path goes through C fopen() which uses the ANSI code page,
-            // not UTF-8, causing failures on non-UTF-8 Windows locales).
-            // With vendored-openssl, PEM_read_bio_PrivateKey handles both legacy PEM and
-            // OpenSSH format, so the old limitation no longer applies.
-            let mem_result = session.userauth_pubkey_memory(
-                &ssh.username,
-                None,
-                private_key,
-                passphrase,
-            );
-            if let Err(mem_err) = mem_result {
-                // LIBSSH2_ERROR_INVAL (-1) or LIBSSH2_ERROR_FILE (-5) indicate a format/
-                // parsing problem, not a credential rejection — fall back to the file path
-                // which uses a different OpenSSL code path and may handle the key better.
-                // Any other error (auth rejected, etc.) is reported immediately.
-                let code = mem_err.code();
-                if code != ssh2::ErrorCode::Session(-1) && code != ssh2::ErrorCode::Session(-5) {
-                    return Err(format!("SSH key authentication failed: {}", mem_err));
-                }
-                let tmp_key_path = {
-                    use std::io::Write;
-                    let mut tmp = tempfile::NamedTempFile::new()
-                        .map_err(|e| format!("Failed to create temp key file: {}", e))?;
-                    tmp.write_all(private_key.as_bytes())
-                        .map_err(|e| format!("Failed to write temp key file: {}", e))?;
-                    tmp.as_file().sync_all()
-                        .map_err(|e| format!("Failed to flush temp key file: {}", e))?;
-                    tmp.into_temp_path()
-                };
-                let file_result = session.userauth_pubkey_file(
+            let key = decode_secret_key(key_str, passphrase)
+                .map_err(|e| format!("SSH key parse failed: {}", e))?;
+            // For RSA keys the server advertises preferred hash algorithm;
+            // Ed25519/ECDSA ignore this field.
+            let hash_alg = handle
+                .best_supported_rsa_hash()
+                .await
+                .map_err(|e| format!("SSH RSA hash negotiation failed: {}", e))?
+                .flatten();
+            let result = handle
+                .authenticate_publickey(
                     &ssh.username,
-                    None,
-                    tmp_key_path.as_ref(),
-                    passphrase,
-                );
-                let _ = tmp_key_path.close();
-                file_result.map_err(|e| format!("SSH key authentication failed: {}", e))?;
+                    PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
+                )
+                .await
+                .map_err(|e| format!("SSH key authentication failed: {}", e))?;
+            if !result.success() {
+                return Err("SSH key authentication rejected by server".to_string());
             }
         } else {
-            // Try default SSH key from ssh-agent
-            session
-                .userauth_agent(&ssh.username)
-                .map_err(|e| format!("SSH agent authentication failed: {}", e))?;
+            return Err(
+                "SSH authentication requires either a password or a private key".to_string(),
+            );
         }
 
-        if !session.authenticated() {
-            return Err("SSH authentication failed".to_string());
-        }
-
-        // Bind the local listener before spawning so we can return the port immediately
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        // Bind local listener on an OS-assigned port
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
             .map_err(|e| format!("Failed to bind local port: {}", e))?;
         let local_port = listener
             .local_addr()
-            .map_err(|e| format!("Failed to get local address: {}", e))?
+            .map_err(|e| format!("Failed to get local port: {}", e))?
             .port();
-        listener
-            .set_nonblocking(true)
-            .map_err(|e| format!("Failed to set non-blocking: {}", e))?;
 
         let target_host = target_host.to_string();
 
-        // The SSH session owns all channels, so everything must run on one thread.
-        // We use a non-blocking event loop that:
-        //   1. Accepts new TCP connections and opens a fresh SSH channel for each
-        //   2. Pumps data bidirectionally between each (TcpStream, Channel) pair
-        std::thread::spawn(move || {
-            use std::io::{Read, Write};
-
-            // Each entry is (local_tcp_stream, ssh_channel)
-            let mut pipes: Vec<(std::net::TcpStream, ssh2::Channel)> = Vec::new();
-            let mut buf = [0u8; 16384];
-
+        // Spawn the accept loop — `handle` lives here, keeping the SSH session open.
+        // Each accepted connection gets its own task with a fresh direct-tcpip channel.
+        // No blocking/non-blocking mode switching; tokio handles all I/O.
+        tokio::spawn(async move {
             loop {
-                // Accept any new incoming connections (listener is non-blocking)
-                loop {
-                    match listener.accept() {
-                        Ok((stream, _)) => {
-                            stream.set_nonblocking(true).ok();
-                            // channel_direct_tcpip is a round-trip with the server so it
-                            // must run in blocking mode; non-blocking returns EAGAIN silently.
-                            // Re-set timeout here: switching blocking mode can reset it on Windows.
-                            session.set_timeout(30_000);
-                            session.set_blocking(true);
-                            let ch_result =
-                                session.channel_direct_tcpip(&target_host, target_port, None);
-                            session.set_blocking(false);
-                            if let Ok(ch) = ch_result {
-                                pipes.push((stream, ch));
-                            }
-                            // If channel open failed the stream is dropped → client gets RST
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                        Err(_) => return, // listener closed or fatal error
-                    }
-                }
+                let (mut local_stream, orig_addr) = match listener.accept().await {
+                    Ok(pair) => pair,
+                    Err(_) => break,
+                };
 
-                // Pump data for all active pipes
-                let mut to_close: Vec<usize> = Vec::new();
-                for (i, (stream, ch)) in pipes.iter_mut().enumerate() {
-                    let mut done = false;
+                // Open a direct-tcpip channel for this connection.
+                // channel_open_direct_tcpip takes &self so handle stays in the loop.
+                let channel = match handle
+                    .channel_open_direct_tcpip(
+                        &target_host,
+                        target_port as u32,
+                        orig_addr.ip().to_string(),
+                        orig_addr.port() as u32,
+                    )
+                    .await
+                {
+                    Ok(ch) => ch,
+                    Err(_) => continue, // channel open failed; drop connection
+                };
 
-                    // channel → local stream
-                    match ch.read(&mut buf) {
-                        Ok(0) => {} // libssh2 non-blocking returns 0 when no data, not WouldBlock
-                        Ok(n) => {
-                            stream.write_all(&buf[..n]).ok();
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                        Err(_) => done = true,
-                    }
-
-                    // local stream → channel
-                    match stream.read(&mut buf) {
-                        Ok(0) => done = true, // TCP peer closed connection
-                        Ok(n) => {
-                            ch.write_all(&buf[..n]).ok();
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                        Err(_) => done = true,
-                    }
-
-                    // ch.eof() is only reliable after set_blocking(false); check last
-                    if done || ch.eof() {
-                        to_close.push(i);
-                    }
-                }
-
-                // Remove closed pipes (in reverse order to preserve indices)
-                for i in to_close.into_iter().rev() {
-                    let (_, mut ch) = pipes.remove(i);
-                    let _ = ch.send_eof();
-                    let _ = ch.close();
-                }
-
-                std::thread::sleep(std::time::Duration::from_millis(if pipes.is_empty() {
-                    5
-                } else {
-                    1
-                }));
+                // Bidirectional copy between local TCP stream and SSH channel.
+                tokio::spawn(async move {
+                    let mut ssh_stream = channel.into_stream();
+                    tokio::io::copy_bidirectional(&mut local_stream, &mut ssh_stream)
+                        .await
+                        .ok();
+                });
             }
         });
 
-        let session_arc = Arc::new(Mutex::new(None::<Session>));
-        Ok(SshTunnel {
-            session: session_arc,
-            local_port,
-        })
+        Ok(SshTunnel { local_port })
     }
 
     pub fn local_port(&self) -> u16 {
