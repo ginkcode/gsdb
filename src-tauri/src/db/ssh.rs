@@ -36,27 +36,45 @@ impl SshTunnel {
                 .map_err(|e| format!("SSH password authentication failed: {}", e))?;
         } else if let Some(private_key) = &ssh.private_key {
             let passphrase = ssh.private_key_passphrase.as_deref();
-            // libssh2's userauth_pubkey_memory does not support the OpenSSH private key
-            // format (-----BEGIN OPENSSH PRIVATE KEY-----). Write to a temp file so that
-            // OpenSSL reads it directly, which handles both legacy PEM and OpenSSH formats.
-            let tmp_key_path = {
-                use std::io::Write;
-                let mut tmp = tempfile::NamedTempFile::new()
-                    .map_err(|e| format!("Failed to create temp key file: {}", e))?;
-                tmp.write_all(private_key.as_bytes())
-                    .map_err(|e| format!("Failed to write temp key file: {}", e))?;
-                // Keep the file alive by persisting it; we delete it after auth.
-                tmp.into_temp_path()
-            };
-            let result = session.userauth_pubkey_file(
+            // Try in-memory auth first: avoids filesystem encoding issues on Windows
+            // (libssh2's file path goes through C fopen() which uses the ANSI code page,
+            // not UTF-8, causing failures on non-UTF-8 Windows locales).
+            // With vendored-openssl, PEM_read_bio_PrivateKey handles both legacy PEM and
+            // OpenSSH format, so the old limitation no longer applies.
+            let mem_result = session.userauth_pubkey_memory(
                 &ssh.username,
                 None,
-                tmp_key_path.as_ref(),
+                private_key,
                 passphrase,
             );
-            // Delete temp file immediately after use regardless of result
-            let _ = tmp_key_path.close();
-            result.map_err(|e| format!("SSH key authentication failed: {}", e))?;
+            if let Err(mem_err) = mem_result {
+                // LIBSSH2_ERROR_INVAL (-1) or LIBSSH2_ERROR_FILE (-5) indicate a format/
+                // parsing problem, not a credential rejection — fall back to the file path
+                // which uses a different OpenSSL code path and may handle the key better.
+                // Any other error (auth rejected, etc.) is reported immediately.
+                let code = mem_err.code();
+                if code != ssh2::ErrorCode::Session(-1) && code != ssh2::ErrorCode::Session(-5) {
+                    return Err(format!("SSH key authentication failed: {}", mem_err));
+                }
+                let tmp_key_path = {
+                    use std::io::Write;
+                    let mut tmp = tempfile::NamedTempFile::new()
+                        .map_err(|e| format!("Failed to create temp key file: {}", e))?;
+                    tmp.write_all(private_key.as_bytes())
+                        .map_err(|e| format!("Failed to write temp key file: {}", e))?;
+                    tmp.as_file().sync_all()
+                        .map_err(|e| format!("Failed to flush temp key file: {}", e))?;
+                    tmp.into_temp_path()
+                };
+                let file_result = session.userauth_pubkey_file(
+                    &ssh.username,
+                    None,
+                    tmp_key_path.as_ref(),
+                    passphrase,
+                );
+                let _ = tmp_key_path.close();
+                file_result.map_err(|e| format!("SSH key authentication failed: {}", e))?;
+            }
         } else {
             // Try default SSH key from ssh-agent
             session
