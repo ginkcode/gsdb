@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Play, AlignLeft } from "@lucide/svelte";
+  import { Play, AlignLeft, Square } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
   import * as ResizablePrimitive from "$lib/components/ui/resizable";
   import SqlEditor from "$lib/components/SqlEditor.svelte";
@@ -16,21 +16,36 @@
 
   let {
     runQuery,
+    cancelQuery,
     selectedRow,
     onRowSelect,
   }: {
     runQuery: (tabId: string, sql: string) => void;
+    cancelQuery: (tabId: string) => Promise<void>;
     selectedRow: Record<string, unknown> | null;
     onRowSelect: (row: Record<string, unknown>) => void;
   } = $props();
 
   let editorRun = $state<() => void>();
   let editorFormat = $state<() => void>();
+  let showCancel = $state(false);
 
   $effect(() => {
     if ($queryTabs.length > 0 && !$activeTabId) {
       activeTabId.set($queryTabs[0].id);
     }
+  });
+
+  $effect(() => {
+    if (!$activeTab?.isLoading) {
+      showCancel = false;
+      return;
+    }
+    const timer = setTimeout(() => { showCancel = true; }, 1000);
+    return () => {
+      clearTimeout(timer);
+      showCancel = false;
+    };
   });
 </script>
 
@@ -84,6 +99,17 @@
               {tab.isLoading ? "Running…" : "Run"}
             </Button>
             <span class="text-xs text-muted-foreground">Ctrl+Enter</span>
+            {#if showCancel}
+              <Button
+                size="sm"
+                variant="outline"
+                class="h-7 gap-1.5 text-xs ml-auto"
+                onclick={() => cancelQuery(tab.id)}
+              >
+                <Square class="w-3 h-3" />
+                Cancel
+              </Button>
+            {/if}
           </div>
         </div>
       </ResizablePrimitive.Pane>

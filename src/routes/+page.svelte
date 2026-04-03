@@ -165,6 +165,7 @@
     try {
       const result: QueryResult = await invoke("run_query", {
         connectionId: tab.connectionId,
+        tabId,
         sql: cleanSql,
       });
       // Enrich column nullability from schema when the tab is a table view
@@ -192,13 +193,21 @@
         result.rowsAffected ?? result.rows?.length,
       );
     } catch (err) {
-      updateTab(tabId, {
-        result: { columns: [], rows: [], error: String(err) },
-        isLoading: false,
-      });
-      // Log failed query to history
-      addQueryHistory(tab.connectionId, cleanSql, false, String(err));
+      const msg = String(err);
+      if (msg.includes("__cancelled__")) {
+        updateTab(tabId, { isLoading: false });
+      } else {
+        updateTab(tabId, {
+          result: { columns: [], rows: [], error: msg },
+          isLoading: false,
+        });
+        addQueryHistory(tab.connectionId, cleanSql, false, msg);
+      }
     }
+  }
+
+  async function cancelQuery(tabId: string) {
+    await invoke("cancel_query", { tabId });
   }
 
   function handleEditConnection(conn: Connection) {
@@ -308,6 +317,7 @@
           <ResizablePrimitive.Pane defaultSize={100} minSize={30}>
             <QueryWorkspace
               {runQuery}
+              {cancelQuery}
               {selectedRow}
               onRowSelect={handleRowSelect}
             />

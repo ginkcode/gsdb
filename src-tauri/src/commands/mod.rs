@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use tauri::State;
-use tokio::sync::Mutex;
+use tokio::sync::{oneshot, Mutex};
 
 use crate::db::{Connection, DbPool, QueryResult, SchemaGraph, TableInfo};
 
@@ -14,6 +14,7 @@ pub struct FilePreview {
 pub struct AppState {
     pub connections: Mutex<HashMap<String, Connection>>,
     pub pools: Mutex<HashMap<String, DbPool>>,
+    pub running_queries: Mutex<HashMap<String, oneshot::Sender<()>>>,
 }
 
 impl AppState {
@@ -21,6 +22,7 @@ impl AppState {
         Self {
             connections: Mutex::new(HashMap::new()),
             pools: Mutex::new(HashMap::new()),
+            running_queries: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -91,10 +93,10 @@ pub async fn reconnect_connection(
 #[tauri::command]
 pub async fn run_query(
     connection_id: String,
+    tab_id: String,
     sql: String,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
-    // Clone the pool (AnyPool is Arc-backed) so we don't hold the lock across await
     let pool = {
         let pools = state.pools.lock().await;
         pools
@@ -103,7 +105,28 @@ pub async fn run_query(
             .clone()
     };
 
-    pool.run_query(&sql).await.map_err(|e| e.to_string())
+    let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+    state
+        .running_queries
+        .lock()
+        .await
+        .insert(tab_id.clone(), cancel_tx);
+
+    let result = tokio::select! {
+        result = pool.run_query(&sql) => result.map_err(|e| e.to_string()),
+        _ = cancel_rx => Err("__cancelled__".to_string()),
+    };
+
+    state.running_queries.lock().await.remove(&tab_id);
+    result
+}
+
+#[tauri::command]
+pub async fn cancel_query(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    if let Some(tx) = state.running_queries.lock().await.remove(&tab_id) {
+        let _ = tx.send(());
+    }
+    Ok(())
 }
 
 #[tauri::command]
