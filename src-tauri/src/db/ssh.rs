@@ -121,7 +121,9 @@ impl SshTunnel {
                         Ok((stream, _)) => {
                             stream.set_nonblocking(true).ok();
                             // channel_direct_tcpip is a round-trip with the server so it
-                            // must run in blocking mode; non-blocking returns EAGAIN silently
+                            // must run in blocking mode; non-blocking returns EAGAIN silently.
+                            // Re-set timeout here: switching blocking mode can reset it on Windows.
+                            session.set_timeout(30_000);
                             session.set_blocking(true);
                             let ch_result =
                                 session.channel_direct_tcpip(&target_host, target_port, None);

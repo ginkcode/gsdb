@@ -40,10 +40,14 @@ impl DbPool {
                 _ => 0,
             });
             let ssh_config = ssh.clone();
-            let tunnel = tokio::task::spawn_blocking(move || {
-                SshTunnel::create(&ssh_config, &target_host, target_port)
-            })
+            let tunnel = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                tokio::task::spawn_blocking(move || {
+                    SshTunnel::create(&ssh_config, &target_host, target_port)
+                }),
+            )
             .await
+            .map_err(|_| DbError::Config("SSH tunnel timed out after 30s".to_string()))?
             .map_err(|e| DbError::Config(e.to_string()))?
             .map_err(DbError::Config)?;
 
