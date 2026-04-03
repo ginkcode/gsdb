@@ -190,7 +190,7 @@
       return true;
     } catch (err) {
       console.error("Failed to reconnect:", err);
-      alert(`Failed to reconnect: ${err}`);
+      toast.error("Reconnect failed", { description: String(err) });
       return false;
     } finally {
       reconnectingConnections = new Set(
