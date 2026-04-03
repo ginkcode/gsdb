@@ -24,6 +24,10 @@ impl SshTunnel {
 
         let mut session =
             Session::new().map_err(|e| format!("Failed to create SSH session: {}", e))?;
+        // 30-second timeout on all blocking libssh2 calls (handshake, auth,
+        // channel open). Prevents infinite hangs on Windows where
+        // channel_direct_tcpip can block forever if the server is slow.
+        session.set_timeout(30_000);
         session.set_tcp_stream(tcp);
         session
             .handshake()

@@ -63,9 +63,13 @@ impl DbPool {
                 };
                 let port = tunnel_port.unwrap_or_else(|| conn.port.unwrap_or(5432));
                 Arc::new(PostgresDriver(
-                    sqlx::PgPool::connect_with(conn.pg_options(host, port))
-                        .await
-                        .map_err(DbError::Sqlx)?,
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(30),
+                        sqlx::PgPool::connect_with(conn.pg_options(host, port)),
+                    )
+                    .await
+                    .map_err(|_| DbError::Config("Connection timed out".to_string()))?
+                    .map_err(DbError::Sqlx)?,
                 ))
             }
             "mysql" => {
@@ -76,9 +80,13 @@ impl DbPool {
                 };
                 let port = tunnel_port.unwrap_or_else(|| conn.port.unwrap_or(3306));
                 Arc::new(MySqlDriver(
-                    sqlx::MySqlPool::connect_with(conn.mysql_options(host, port))
-                        .await
-                        .map_err(DbError::Sqlx)?,
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(30),
+                        sqlx::MySqlPool::connect_with(conn.mysql_options(host, port)),
+                    )
+                    .await
+                    .map_err(|_| DbError::Config("Connection timed out".to_string()))?
+                    .map_err(DbError::Sqlx)?,
                 ))
             }
             "sqlite" => {
