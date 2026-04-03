@@ -37,11 +37,17 @@ async function getStore(): Promise<Store> {
   return store;
 }
 
-// Keyring key helpers
-function keyDbPassword(id: string)      { return `connection-${id}`; }
-function keySshPassword(id: string)     { return `connection-${id}-ssh-password`; }
-function keySshKey(id: string)          { return `connection-${id}-ssh-key`; }
-function keySshPassphrase(id: string)   { return `connection-${id}-ssh-passphrase`; }
+// ── Keyring helpers ───────────────────────────────────────────────────────────
+// Only SHORT secrets go into the OS keyring. All backends (including Windows
+// Credential Manager which caps at ~1024 bytes) can handle these safely.
+// The SSH private key is large and is encrypted with AES-256-GCM instead:
+//   • Encryption key (32 bytes → 44-char base64) → keyring  ✓ fits everywhere
+//   • Ciphertext (arbitrary size)                 → Tauri store file
+
+function keyDbPassword(id: string)    { return `connection-${id}`; }
+function keySshPassword(id: string)   { return `connection-${id}-ssh-password`; }
+function keySshPassphrase(id: string) { return `connection-${id}-ssh-passphrase`; }
+const SSH_ENC_KEY_ACCOUNT             = "gsdb-ssh-encryption-key";
 
 async function getSecret(key: string): Promise<string | undefined> {
   try { return (await getPassword(KEYRING_SERVICE, key)) || undefined; } catch { return undefined; }
@@ -51,6 +57,86 @@ async function setOrDelete(key: string, value: string | undefined): Promise<void
     if (value) { await setPassword(KEYRING_SERVICE, key, value); }
     else { await deletePassword(KEYRING_SERVICE, key).catch(() => {}); }
   } catch (err) { console.error(`[Keyring] Failed for key ${key}:`, err); }
+}
+
+// ── AES-256-GCM encryption via the Web Crypto API ────────────────────────────
+// crypto.subtle is available in Tauri's WebKit / WebView2 on all platforms.
+
+function _b64(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes));
+}
+function _bytes(b64: string): Uint8Array {
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+}
+
+// Single promise ensures the key is generated only once even under concurrent calls.
+let _encKeyPromise: Promise<CryptoKey | null> | null = null;
+function _getEncKey(): Promise<CryptoKey | null> {
+  if (!_encKeyPromise) _encKeyPromise = _loadOrCreateEncKey();
+  return _encKeyPromise;
+}
+async function _loadOrCreateEncKey(): Promise<CryptoKey | null> {
+  try {
+    const stored = await getSecret(SSH_ENC_KEY_ACCOUNT);
+    if (stored) {
+      return await crypto.subtle.importKey(
+        "raw", _bytes(stored), { name: "AES-GCM" }, false, ["encrypt", "decrypt"]
+      );
+    }
+    const key = await crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
+    );
+    const raw = new Uint8Array(await crypto.subtle.exportKey("raw", key));
+    await setOrDelete(SSH_ENC_KEY_ACCOUNT, _b64(raw));
+    return key;
+  } catch (err) {
+    console.error("[Crypto] Failed to initialise SSH encryption key:", err);
+    return null;
+  }
+}
+
+async function _encrypt(plaintext: string): Promise<string> {
+  const key = await _getEncKey();
+  if (!key) throw new Error("Encryption key unavailable");
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv }, key, new TextEncoder().encode(plaintext)
+  );
+  return JSON.stringify({ iv: _b64(iv), d: _b64(new Uint8Array(data)) });
+}
+
+async function _decrypt(ciphertext: string): Promise<string | undefined> {
+  try {
+    const { iv, d } = JSON.parse(ciphertext);
+    const key = await _getEncKey();
+    if (!key) return undefined;
+    const data = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: _bytes(iv) }, key, _bytes(d)
+    );
+    return new TextDecoder().decode(data);
+  } catch { return undefined; }
+}
+
+// Save the encrypted SSH private key to the Tauri store file (not keyring —
+// keys can be kilobytes, exceeding keyring size limits on some platforms).
+async function saveEncryptedSshKey(conn: Connection): Promise<void> {
+  const s = await getStore();
+  const k = `ssh-key-${conn.id}`;
+  if (conn.ssh?.privateKey) {
+    try { await s.set(k, await _encrypt(conn.ssh.privateKey)); }
+    catch (err) { console.error(`[Crypto] Failed to save SSH key for ${conn.id}:`, err); }
+  } else {
+    await s.delete(k).catch(() => {});
+  }
+  await s.save();
+}
+
+async function loadEncryptedSshKey(connId: string): Promise<string | undefined> {
+  try {
+    const s = await getStore();
+    const ct = await s.get<string>(`ssh-key-${connId}`);
+    return ct ? await _decrypt(ct) : undefined;
+  } catch { return undefined; }
 }
 
 // Load saved connections from store and retrieve passwords from keyring
@@ -120,28 +206,33 @@ async function saveConnectionMetadata(conns: Connection[]): Promise<void> {
   }
 }
 
-// Save all secrets for a single connection to keyring
+// Save all secrets for a single connection
 async function saveConnectionSecrets(conn: Connection): Promise<void> {
+  // Short secrets → keyring
   await setOrDelete(keyDbPassword(conn.id), conn.password);
   await setOrDelete(keySshPassword(conn.id), conn.ssh?.password);
-  await setOrDelete(keySshKey(conn.id), conn.ssh?.privateKey);
   await setOrDelete(keySshPassphrase(conn.id), conn.ssh?.privateKeyPassphrase);
+  // SSH private key → AES-256-GCM in store file (too large for keyring on some platforms)
+  await saveEncryptedSshKey(conn);
 }
 
-// Remove all secrets for a single connection from keyring
+// Remove all secrets for a single connection
 async function deleteConnectionSecrets(connId: string): Promise<void> {
   await setOrDelete(keyDbPassword(connId), undefined);
   await setOrDelete(keySshPassword(connId), undefined);
-  await setOrDelete(keySshKey(connId), undefined);
   await setOrDelete(keySshPassphrase(connId), undefined);
+  // Remove encrypted key from store
+  const s = await getStore();
+  await s.delete(`ssh-key-${connId}`).catch(() => {});
+  await s.save();
 }
 
-// Load all secrets for a single connection from keyring
+// Load all secrets for a single connection
 async function loadConnectionSecrets(conn: Connection): Promise<Connection> {
   const password = await getSecret(keyDbPassword(conn.id));
   const sshPassword = await getSecret(keySshPassword(conn.id));
-  const sshKey = await getSecret(keySshKey(conn.id));
   const sshPassphrase = await getSecret(keySshPassphrase(conn.id));
+  const sshKey = await loadEncryptedSshKey(conn.id);
   return {
     ...conn,
     password,
