@@ -24,6 +24,20 @@
   let scrollTop = $state(0);
   let containerHeight = $state(400);
 
+  // Coalesce rapid scroll events (touchpad inertia fires 60+/s) to one DOM
+  // update per animation frame. Without this, Svelte re-renders every event.
+  let _pendingScrollTop = 0;
+  let _rafScheduled = false;
+  function handleScroll(e: Event) {
+    _pendingScrollTop = (e.currentTarget as HTMLDivElement).scrollTop;
+    if (_rafScheduled) return;
+    _rafScheduled = true;
+    requestAnimationFrame(() => {
+      scrollTop = _pendingScrollTop;
+      _rafScheduled = false;
+    });
+  }
+
   $effect(() => {
     if (!containerEl) return;
     const ro = new ResizeObserver((entries) => {
@@ -115,7 +129,8 @@
     <div
       bind:this={containerEl}
       class="flex-1 h-0 overflow-auto"
-      onscroll={(e) => (scrollTop = e.currentTarget.scrollTop)}
+      style="overflow-anchor: none;"
+      onscroll={handleScroll}
     >
       <table class="text-sm font-mono border-collapse">
         <thead class="sticky top-0 z-10">
