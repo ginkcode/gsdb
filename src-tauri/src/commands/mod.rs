@@ -4,6 +4,34 @@ use tokio::sync::{oneshot, Mutex};
 
 use crate::db::{Connection, DbPool, QueryResult, SchemaGraph, StreamUpdate, TableInfo};
 
+// ── Reconnect helpers ─────────────────────────────────────────────────────────
+
+/// Closes the stale pool and establishes a fresh one (including a new SSH tunnel
+/// when the connection is configured with SSH). Stores the new pool in AppState.
+async fn try_reconnect(connection_id: &str, state: &AppState) -> Result<DbPool, String> {
+    let connection = {
+        state
+            .connections
+            .lock()
+            .await
+            .get(connection_id)
+            .cloned()
+            .ok_or_else(|| "Connection not found".to_string())?
+    };
+    if let Some(old) = state.pools.lock().await.get(connection_id) {
+        let _ = old.close().await;
+    }
+    let pool = DbPool::connect(&connection)
+        .await
+        .map_err(|e| format!("Auto-reconnect failed: {}", e))?;
+    state
+        .pools
+        .lock()
+        .await
+        .insert(connection_id.to_string(), pool.clone());
+    Ok(pool)
+}
+
 #[derive(serde::Serialize)]
 pub struct FilePreview {
     pub content: String,
@@ -112,9 +140,25 @@ pub async fn run_query(
         .await
         .insert(tab_id.clone(), cancel_tx);
 
-    let result = tokio::select! {
-        result = pool.run_query(&sql) => result.map_err(|e| e.to_string()),
-        _ = cancel_rx => Err("__cancelled__".to_string()),
+    // Keep the typed DbError so we can inspect it before converting to String.
+    let db_result = tokio::select! {
+        result = pool.run_query(&sql) => result,
+        _ = cancel_rx => {
+            state.running_queries.lock().await.remove(&tab_id);
+            return Err("__cancelled__".to_string());
+        }
+    };
+
+    // On a connection error (e.g. after system sleep / SSH tunnel drop), reconnect
+    // and retry once. DB errors (syntax, constraints, permissions) are NOT retried.
+    let result = match db_result {
+        Err(ref e) if e.is_connection_error() => {
+            match try_reconnect(&connection_id, &state).await {
+                Ok(new_pool) => new_pool.run_query(&sql).await.map_err(|e| e.to_string()),
+                Err(_) => db_result.map_err(|e| e.to_string()),
+            }
+        }
+        other => other.map_err(|e| e.to_string()),
     };
 
     state.running_queries.lock().await.remove(&tab_id);
@@ -146,39 +190,90 @@ pub async fn run_query_stream(
         .await
         .insert(tab_id.clone(), cancel_tx);
 
-    // mpsc channel bridges the driver (which doesn't know about Tauri) to on_event
-    let (row_tx, mut row_rx) = tokio::sync::mpsc::channel::<StreamUpdate>(64);
+    // Inner streaming loop. Returns:
+    //   Ok(true)   — completed normally or cancelled
+    //   Ok(false)  — connection error before any data was sent; safe to retry
+    async fn do_stream(
+        pool: &DbPool,
+        sql: &str,
+        on_event: &tauri::ipc::Channel<StreamUpdate>,
+        cancel_rx: &mut oneshot::Receiver<()>,
+        cancelled: &mut bool,
+    ) -> Result<bool, String> {
+        let (row_tx, mut row_rx) = tokio::sync::mpsc::channel::<StreamUpdate>(64);
+        let stream_handle = {
+            let pool = pool.clone();
+            let sql = sql.to_string();
+            tokio::spawn(async move { pool.stream_query(&sql, row_tx).await })
+        };
 
-    // Spawn the driver's streaming in a task so we can select on cancel independently
-    let stream_handle = {
-        let pool = pool.clone();
-        let sql = sql.clone();
-        tokio::spawn(async move { pool.stream_query(&sql, row_tx).await })
-    };
+        let mut header_sent = false;
 
-    // Forward messages to the Tauri channel; abort streaming task on cancel
-    let mut cancelled = false;
-    loop {
-        tokio::select! {
-            biased; // check cancel first for responsive UX
-            _ = &mut cancel_rx, if !cancelled => {
-                cancelled = true;
-                stream_handle.abort();
-                on_event.send(StreamUpdate::Cancelled).ok();
-                break;
-            }
-            msg = row_rx.recv() => {
-                match msg {
-                    Some(update) => {
-                        let is_final = matches!(
-                            update,
-                            StreamUpdate::Done { .. } | StreamUpdate::Error { .. }
-                        );
-                        on_event.send(update).ok();
-                        if is_final { break; }
-                    }
-                    None => break, // sender dropped — stream completed normally
+        loop {
+            tokio::select! {
+                biased;
+                _ = &mut *cancel_rx, if !*cancelled => {
+                    *cancelled = true;
+                    stream_handle.abort();
+                    on_event.send(StreamUpdate::Cancelled).ok();
+                    return Ok(true);
                 }
+                msg = row_rx.recv() => {
+                    match msg {
+                        Some(update) => {
+                            if matches!(update, StreamUpdate::Header { .. }) {
+                                header_sent = true;
+                            }
+                            let is_final = matches!(
+                                update,
+                                StreamUpdate::Done { .. } | StreamUpdate::Error { .. }
+                            );
+                            on_event.send(update).ok();
+                            if is_final { return Ok(true); }
+                        }
+                        // row_tx was dropped — stream_query returned (Ok or Err).
+                        // Await the task to get the typed result; do NOT treat this as success.
+                        None => {
+                            match stream_handle.await {
+                                Ok(Ok(())) => {
+                                    // stream_query finished without sending Done — shouldn't
+                                    // happen with well-behaved drivers, but handle gracefully.
+                                    on_event.send(StreamUpdate::Done { rows_affected: None }).ok();
+                                }
+                                Ok(Err(e)) => {
+                                    // Connection errors before any data → signal retry.
+                                    // DB errors (syntax, constraints, etc.) → forward to frontend.
+                                    if !header_sent && e.is_connection_error() {
+                                        return Ok(false);
+                                    }
+                                    on_event.send(StreamUpdate::Error { message: e.to_string() }).ok();
+                                }
+                                Err(join_err) if join_err.is_cancelled() => { /* aborted above */ }
+                                Err(join_err) => {
+                                    on_event.send(StreamUpdate::Error { message: join_err.to_string() }).ok();
+                                }
+                            }
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut cancelled = false;
+    let done = do_stream(&pool, &sql, &on_event, &mut cancel_rx, &mut cancelled).await?;
+
+    // If the stream failed before any data was sent, try reconnecting once.
+    if !done && !cancelled {
+        match try_reconnect(&connection_id, &state).await {
+            Ok(new_pool) => {
+                do_stream(&new_pool, &sql, &on_event, &mut cancel_rx, &mut cancelled).await?;
+            }
+            Err(e) => {
+                on_event
+                    .send(StreamUpdate::Error { message: e })
+                    .ok();
             }
         }
     }

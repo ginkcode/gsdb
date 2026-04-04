@@ -2190,7 +2190,7 @@ dependencies = [
 
 [[package]]
 name = "gsdb"
-version = "0.3.24"
+version = "0.3.25"
 dependencies = [
  "async-trait",
  "bigdecimal 0.4.10",

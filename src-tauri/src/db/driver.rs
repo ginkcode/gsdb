@@ -64,6 +64,32 @@ impl From<sqlx::Error> for DbError {
     }
 }
 
+impl DbError {
+    /// Returns true for network/transport failures where reconnecting may help.
+    /// Returns false for database-level errors (syntax, constraints, permissions, etc.).
+    pub fn is_connection_error(&self) -> bool {
+        match self {
+            // sqlx surfaces IO failures as Io; PoolClosed means the pool was explicitly shut down.
+            // PoolTimedOut means all connections are busy — NOT a dead connection, don't retry.
+            DbError::Sqlx(e) => matches!(e, sqlx::Error::Io(_) | sqlx::Error::PoolClosed),
+            // Tiberius (SQL Server) and SSH tunnel errors are all wrapped as Config strings.
+            // Only match OS/transport-level patterns; SQL server errors (syntax, constraints, etc.)
+            // look nothing like these.
+            DbError::Config(s) => {
+                let m = s.to_lowercase();
+                m.contains("broken pipe")
+                    || m.contains("connection reset")
+                    || m.contains("connection refused")
+                    || m.contains("connection aborted")
+                    || m.contains("eof")
+                    || m.contains("i/o error")
+                    || m.contains("transport error")
+                    || m.contains("channel open failed")
+            }
+        }
+    }
+}
+
 #[async_trait]
 pub trait Driver: Send + Sync {
     fn dialect(&self) -> Dialect;
