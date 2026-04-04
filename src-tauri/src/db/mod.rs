@@ -8,7 +8,7 @@ mod sqlite;
 mod sqlserver;
 mod ssh;
 
-pub use driver::{DbError, Dialect, Driver, ServerInfo};
+pub use driver::{DbError, Dialect, Driver, ServerInfo, StreamUpdate};
 pub use ssh::SshTunnel;
 pub use types::{Connection, QueryResult, SchemaGraph, TableInfo};
 
@@ -138,6 +138,14 @@ impl DbPool {
 
     pub async fn run_query(&self, sql: &str) -> Result<QueryResult, DbError> {
         self.0.run_query(sql).await
+    }
+
+    pub async fn stream_query(
+        &self,
+        sql: &str,
+        tx: tokio::sync::mpsc::Sender<StreamUpdate>,
+    ) -> Result<(), DbError> {
+        self.0.stream_query(sql, tx).await
     }
 
     pub async fn list_tables(&self) -> Result<Vec<TableInfo>, DbError> {

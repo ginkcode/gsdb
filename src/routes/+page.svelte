@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke, Channel } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
   import { Plus, Database } from "@lucide/svelte";
@@ -32,7 +32,7 @@
     makeTabPermanent,
     addQueryHistory,
   } from "$lib/stores/connections";
-  import type { Connection, QueryResult } from "$lib/types";
+  import type { Connection, QueryResult, StreamUpdate } from "$lib/types";
 
   let sidebar = $state<Sidebar | null>(null);
   let showConnectionForm = $state(false);
@@ -161,36 +161,64 @@
     // Clean up SQL - trim and remove trailing semicolon for PostgreSQL compatibility
     const cleanSql = sql.trim().replace(/;+\s*$/, "");
 
-    updateTab(tabId, { isLoading: true, result: undefined });
+    const queryKey = `${tabId}-${Date.now()}`;
+    const streamingResult: QueryResult = { columns: [], rows: [], queryKey };
+    updateTab(tabId, { isLoading: true, result: streamingResult });
+
     try {
-      const result: QueryResult = await invoke("run_query", {
+      const channel = new Channel<StreamUpdate>();
+      let rowsAffected: number | undefined;
+
+      channel.onmessage = (update: StreamUpdate) => {
+        if (update.type === "header") {
+          streamingResult.columns = update.columns;
+          streamingResult.columnTypes = update.columnTypes;
+          streamingResult.columnNullable = update.columnNullable;
+          updateTab(tabId, { result: { ...streamingResult } });
+        } else if (update.type === "rows") {
+          streamingResult.rows = [...streamingResult.rows, ...update.rows];
+          updateTab(tabId, { result: { ...streamingResult } });
+        } else if (update.type === "done") {
+          rowsAffected = update.rowsAffected ?? undefined;
+        } else if (update.type === "error") {
+          updateTab(tabId, {
+            result: { columns: streamingResult.columns, rows: streamingResult.rows, error: update.message },
+            isLoading: false,
+          });
+          addQueryHistory(tab.connectionId, cleanSql, false, update.message);
+        }
+      };
+
+      await invoke("run_query_stream", {
         connectionId: tab.connectionId,
         tabId,
         sql: cleanSql,
+        onEvent: channel,
       });
+
       // Enrich column nullability from schema when the tab is a table view
-      if (tab.title !== "Query" && result.columns.length > 0) {
+      if (tab.title !== "Query" && streamingResult.columns.length > 0) {
         try {
           const nullableMap: Record<string, boolean> = await invoke(
             "get_column_nullable",
             { connectionId: tab.connectionId, tableName: tab.title },
           );
-          result.columnNullable = result.columns.map(
+          streamingResult.columnNullable = streamingResult.columns.map(
             (col) => nullableMap[col] ?? true,
           );
         } catch {
-          // schema lookup failed — leave as default (all nullable)
+          // schema lookup failed — leave as default
         }
       }
-      // Store the last executed SQL for refreshing after updates
-      updateTab(tabId, { result, isLoading: false, lastExecutedSql: cleanSql });
-      // Log successful query to history
+
+      streamingResult.rowsAffected = rowsAffected;
+      updateTab(tabId, { result: { ...streamingResult }, isLoading: false, lastExecutedSql: cleanSql });
       addQueryHistory(
         tab.connectionId,
         cleanSql,
         true,
         undefined,
-        result.rowsAffected ?? result.rows?.length,
+        rowsAffected ?? streamingResult.rows?.length,
       );
     } catch (err) {
       const msg = String(err);

@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
-use super::driver::{DbError, Dialect, Driver, ServerInfo};
+use super::driver::{DbError, Dialect, Driver, ServerInfo, StreamUpdate};
 use super::types::{
     QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo,
 };
@@ -226,6 +226,106 @@ impl Driver for SqlServerDriver {
                 e.to_string()
             }))
         })
+    }
+
+    async fn stream_query(
+        &self,
+        sql: &str,
+        tx: tokio::sync::mpsc::Sender<StreamUpdate>,
+    ) -> Result<(), DbError> {
+        const BATCH: usize = 200;
+
+        let sql = self
+            .maybe_wrap_variant_sql(sql)
+            .await
+            .unwrap_or_else(|| sql.to_string());
+        let client_arc = Arc::clone(&self.client);
+
+        tokio::spawn(async move {
+            use futures::TryStreamExt;
+
+            let mut guard = client_arc.lock().await;
+            let client = guard
+                .as_mut()
+                .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
+
+            let mut tib_stream = client
+                .simple_query(&sql)
+                .await
+                .map_err(|e| DbError::Config(e.to_string()))?;
+
+            let mut columns: Vec<String> = vec![];
+            let mut header_sent = false;
+            let mut batch: Vec<std::collections::HashMap<String, serde_json::Value>> =
+                Vec::with_capacity(BATCH);
+
+            while let Some(item) = tib_stream
+                .try_next()
+                .await
+                .map_err(|e: tiberius::error::Error| DbError::Config(e.to_string()))?
+            {
+                match item {
+                    tiberius::QueryItem::Metadata(meta) if !header_sent => {
+                        columns = meta.columns().iter().map(|c| c.name().to_string()).collect();
+                        let column_types = meta
+                            .columns()
+                            .iter()
+                            .map(|c| col_type_name(c.column_type()))
+                            .collect();
+                        if tx
+                            .send(StreamUpdate::Header {
+                                columns: columns.clone(),
+                                column_types,
+                                column_nullable: vec![true; columns.len()],
+                            })
+                            .await
+                            .is_err()
+                        {
+                            return Ok(());
+                        }
+                        header_sent = true;
+                    }
+                    tiberius::QueryItem::Row(row) => {
+                        let row_map = columns
+                            .iter()
+                            .enumerate()
+                            .map(|(i, col)| (col.clone(), mssql_value(&row, i)))
+                            .collect();
+                        batch.push(row_map);
+
+                        if batch.len() >= BATCH {
+                            if tx
+                                .send(StreamUpdate::Rows {
+                                    rows: std::mem::take(&mut batch),
+                                })
+                                .await
+                                .is_err()
+                            {
+                                return Ok(());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if !header_sent {
+                let _ = tx
+                    .send(StreamUpdate::Header {
+                        columns: vec![],
+                        column_types: vec![],
+                        column_nullable: vec![],
+                    })
+                    .await;
+            } else if !batch.is_empty() {
+                let _ = tx.send(StreamUpdate::Rows { rows: batch }).await;
+            }
+
+            let _ = tx.send(StreamUpdate::Done { rows_affected: None }).await;
+            Ok(())
+        })
+        .await
+        .unwrap_or_else(|e| Err(DbError::Config(e.to_string())))
     }
 
     async fn list_tables(&self) -> Result<Vec<TableInfo>, DbError> {

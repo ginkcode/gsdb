@@ -71,7 +71,15 @@ export interface QueryResult {
   rows: Record<string, unknown>[];
   rowsAffected?: number;
   error?: string;
+  queryKey?: string; // unique per execution; used to detect new queries vs. streaming row appends
 }
+
+export type StreamUpdate =
+  | { type: "header"; columns: string[]; columnTypes: string[]; columnNullable: boolean[] }
+  | { type: "rows"; rows: Record<string, unknown>[] }
+  | { type: "done"; rowsAffected?: number }
+  | { type: "cancelled" }
+  | { type: "error"; message: string };
 
 export interface ServerInfo {
   version?: string;

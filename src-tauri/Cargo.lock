@@ -2190,12 +2190,13 @@ dependencies = [
 
 [[package]]
 name = "gsdb"
-version = "0.3.23"
+version = "0.3.24"
 dependencies = [
  "async-trait",
  "bigdecimal 0.4.10",
  "chrono",
  "dark-light",
+ "futures",
  "hex",
  "objc",
  "russh",

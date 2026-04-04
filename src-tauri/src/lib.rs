@@ -5,7 +5,7 @@ use commands::{
     add_connection, cancel_query, create_database, export_database, export_table,
     get_column_nullable, get_schema, get_server_info, get_system_theme, get_table_definition,
     import_sql, list_databases, list_tables, read_file_preview, reconnect_connection, run_query,
-    AppState,
+    run_query_stream, AppState,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -41,6 +41,7 @@ pub fn run() {
             add_connection,
             reconnect_connection,
             run_query,
+            run_query_stream,
             list_tables,
             get_table_definition,
             get_system_theme,

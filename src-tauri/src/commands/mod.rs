@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use tauri::State;
 use tokio::sync::{oneshot, Mutex};
 
-use crate::db::{Connection, DbPool, QueryResult, SchemaGraph, TableInfo};
+use crate::db::{Connection, DbPool, QueryResult, SchemaGraph, StreamUpdate, TableInfo};
 
 #[derive(serde::Serialize)]
 pub struct FilePreview {
@@ -119,6 +119,72 @@ pub async fn run_query(
 
     state.running_queries.lock().await.remove(&tab_id);
     result
+}
+
+/// Streams query results to the frontend via a Tauri IPC channel.
+/// Sends: Header → Rows* → Done | Error | Cancelled
+#[tauri::command]
+pub async fn run_query_stream(
+    connection_id: String,
+    tab_id: String,
+    sql: String,
+    on_event: tauri::ipc::Channel<StreamUpdate>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let pool = {
+        let pools = state.pools.lock().await;
+        pools
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+            .clone()
+    };
+
+    let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+    state
+        .running_queries
+        .lock()
+        .await
+        .insert(tab_id.clone(), cancel_tx);
+
+    // mpsc channel bridges the driver (which doesn't know about Tauri) to on_event
+    let (row_tx, mut row_rx) = tokio::sync::mpsc::channel::<StreamUpdate>(64);
+
+    // Spawn the driver's streaming in a task so we can select on cancel independently
+    let stream_handle = {
+        let pool = pool.clone();
+        let sql = sql.clone();
+        tokio::spawn(async move { pool.stream_query(&sql, row_tx).await })
+    };
+
+    // Forward messages to the Tauri channel; abort streaming task on cancel
+    let mut cancelled = false;
+    loop {
+        tokio::select! {
+            biased; // check cancel first for responsive UX
+            _ = &mut cancel_rx, if !cancelled => {
+                cancelled = true;
+                stream_handle.abort();
+                on_event.send(StreamUpdate::Cancelled).ok();
+                break;
+            }
+            msg = row_rx.recv() => {
+                match msg {
+                    Some(update) => {
+                        let is_final = matches!(
+                            update,
+                            StreamUpdate::Done { .. } | StreamUpdate::Error { .. }
+                        );
+                        on_event.send(update).ok();
+                        if is_final { break; }
+                    }
+                    None => break, // sender dropped — stream completed normally
+                }
+            }
+        }
+    }
+
+    state.running_queries.lock().await.remove(&tab_id);
+    Ok(())
 }
 
 #[tauri::command]

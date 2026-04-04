@@ -1,8 +1,37 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use serde_json::Value;
+use tokio::sync::mpsc;
 
 use super::types::{QueryResult, SchemaGraph, TableInfo};
+
+// ── Streaming update sent from driver → Tauri channel ────────────────────────
+
+/// Tagged-union streamed from `stream_query` to the frontend via Tauri Channel.
+/// Variants arrive in this order: Header → Rows* → Done | Error | Cancelled.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum StreamUpdate {
+    #[serde(rename_all = "camelCase")]
+    Header {
+        columns: Vec<String>,
+        column_types: Vec<String>,
+        column_nullable: Vec<bool>,
+    },
+    Rows {
+        rows: Vec<HashMap<String, Value>>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Done {
+        rows_affected: Option<u64>,
+    },
+    /// Sent by the command layer when cancel_query fires; never by the driver.
+    Cancelled,
+    Error {
+        message: String,
+    },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialect {
@@ -55,6 +84,34 @@ pub trait Driver: Send + Sync {
     async fn get_schema(&self) -> Result<SchemaGraph, DbError>;
 
     async fn get_server_info(&self) -> Result<ServerInfo, DbError>;
+
+    /// Stream query results row-by-row via an mpsc sender.
+    /// Send Header first, then one or more Rows batches, then Done (or Error).
+    /// The default implementation collects everything first and sends as one batch —
+    /// override in each driver for true incremental streaming.
+    async fn stream_query(
+        &self,
+        sql: &str,
+        tx: mpsc::Sender<StreamUpdate>,
+    ) -> Result<(), DbError> {
+        let result = self.run_query(sql).await?;
+        tx.send(StreamUpdate::Header {
+            columns: result.columns.clone(),
+            column_types: result.column_types.clone(),
+            column_nullable: result.column_nullable.clone(),
+        })
+        .await
+        .ok();
+        if !result.rows.is_empty() {
+            tx.send(StreamUpdate::Rows { rows: result.rows }).await.ok();
+        }
+        tx.send(StreamUpdate::Done {
+            rows_affected: result.rows_affected,
+        })
+        .await
+        .ok();
+        Ok(())
+    }
 
     /// Close the connection and release resources.
     /// For connection pools (Postgres, MySQL, SQLite), this is a no-op.

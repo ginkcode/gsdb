@@ -47,9 +47,9 @@
     return () => ro.disconnect();
   });
 
-  // Reset scroll position when result changes
+  // Reset scroll position only when a new query starts, not on streaming row appends
   $effect(() => {
-    result; // track
+    result?.queryKey; // track only the query identity, not the row data
     scrollTop = 0;
     if (containerEl) containerEl.scrollTop = 0;
   });

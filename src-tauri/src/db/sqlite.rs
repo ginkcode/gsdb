@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::{Column, Row, TypeInfo};
 
-use super::driver::{DbError, Dialect, Driver, ServerInfo};
+use super::driver::{DbError, Dialect, Driver, ServerInfo, StreamUpdate};
 use super::types::{
     QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo,
 };
@@ -19,6 +19,80 @@ impl Driver for SqliteDriver {
 
     async fn run_query(&self, sql: &str) -> Result<QueryResult, DbError> {
         Ok(sqlite_query(&self.0, sql).await?)
+    }
+
+    async fn stream_query(
+        &self,
+        sql: &str,
+        tx: tokio::sync::mpsc::Sender<StreamUpdate>,
+    ) -> Result<(), DbError> {
+        use futures::StreamExt;
+        const BATCH: usize = 200;
+
+        let mut stream = sqlx::query(sql).fetch(&self.0);
+        let mut columns: Vec<String> = vec![];
+        let mut header_sent = false;
+        let mut batch: Vec<std::collections::HashMap<String, serde_json::Value>> =
+            Vec::with_capacity(BATCH);
+
+        while let Some(row) = stream.next().await {
+            let row = row.map_err(DbError::Sqlx)?;
+
+            if !header_sent {
+                columns = row.columns().iter().map(|c| c.name().to_string()).collect();
+                let column_types = row
+                    .columns()
+                    .iter()
+                    .map(|c| c.type_info().name().to_lowercase())
+                    .collect();
+                if tx
+                    .send(StreamUpdate::Header {
+                        columns: columns.clone(),
+                        column_types,
+                        column_nullable: vec![true; columns.len()],
+                    })
+                    .await
+                    .is_err()
+                {
+                    return Ok(());
+                }
+                header_sent = true;
+            }
+
+            let row_map = columns
+                .iter()
+                .enumerate()
+                .map(|(i, col)| (col.clone(), sqlite_value(&row, i)))
+                .collect();
+            batch.push(row_map);
+
+            if batch.len() >= BATCH {
+                if tx
+                    .send(StreamUpdate::Rows {
+                        rows: std::mem::take(&mut batch),
+                    })
+                    .await
+                    .is_err()
+                {
+                    return Ok(());
+                }
+            }
+        }
+
+        if !header_sent {
+            let _ = tx
+                .send(StreamUpdate::Header {
+                    columns: vec![],
+                    column_types: vec![],
+                    column_nullable: vec![],
+                })
+                .await;
+        } else if !batch.is_empty() {
+            let _ = tx.send(StreamUpdate::Rows { rows: batch }).await;
+        }
+
+        let _ = tx.send(StreamUpdate::Done { rows_affected: None }).await;
+        Ok(())
     }
 
     async fn list_tables(&self) -> Result<Vec<TableInfo>, DbError> {
