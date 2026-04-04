@@ -47,9 +47,14 @@
     return () => ro.disconnect();
   });
 
-  // Reset scroll position only when a new query starts, not on streaming row appends
+  // Reset scroll only when a new query starts (queryKey changes), not on row appends.
+  // The effect re-runs whenever `result` changes reference (each streaming batch),
+  // but the guard ensures we only reset scroll when the query itself is new.
+  let _lastQueryKey = $state<string | undefined>(undefined);
   $effect(() => {
-    result?.queryKey; // track only the query identity, not the row data
+    const key = result?.queryKey;
+    if (key === _lastQueryKey) return;
+    _lastQueryKey = key;
     scrollTop = 0;
     if (containerEl) containerEl.scrollTop = 0;
   });
