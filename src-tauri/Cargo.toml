@@ -1,6 +1,6 @@
 [package]
 name = "gsdb"
-version = "0.3.26"
+version = "0.3.27"
 description = "A database management tool"
 authors = ["you"]
 edition = "2021"
@@ -50,7 +50,7 @@ tauri-plugin-store = "2.4.2"
 tauri-plugin-keyring = "0.1.0"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
-russh = "0.59"
+russh = "0.60"
 futures = "0.3"
 tokio-socks = "0.5"
 tauri-plugin-window-state = "2"

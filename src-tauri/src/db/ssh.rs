@@ -3,6 +3,7 @@ use std::sync::Arc;
 use russh::client;
 use russh::keys::{decode_secret_key, key::PrivateKeyWithHashAlg};
 use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
 
 use super::types::SshConfig;
 
@@ -25,8 +26,17 @@ impl client::Handler for AcceptAllKeys {
 
 // ── Public tunnel handle ──────────────────────────────────────────────────────
 
+/// Owns the accept-loop task. Dropping this struct aborts the task, which
+/// closes the TcpListener and disconnects the SSH session cleanly.
 pub struct SshTunnel {
     local_port: u16,
+    _task: JoinHandle<()>,
+}
+
+impl Drop for SshTunnel {
+    fn drop(&mut self) {
+        self._task.abort();
+    }
 }
 
 impl SshTunnel {
@@ -34,8 +44,8 @@ impl SshTunnel {
     /// spawns an async task that forwards each accepted TCP connection through
     /// a direct-tcpip SSH channel to `target_host:target_port`.
     ///
-    /// Pure async — no blocking threads, no non-blocking mode switching.
-    /// Works correctly on Windows because russh is pure Rust with tokio I/O.
+    /// Dropping the returned `SshTunnel` shuts the tunnel down (aborts the task,
+    /// closes the listener, and disconnects the SSH session).
     pub async fn create(
         ssh: &SshConfig,
         target_host: &str,
@@ -99,17 +109,14 @@ impl SshTunnel {
         let target_host = target_host.to_string();
 
         // Spawn the accept loop — `handle` lives here, keeping the SSH session open.
-        // Each accepted connection gets its own task with a fresh direct-tcpip channel.
-        // No blocking/non-blocking mode switching; tokio handles all I/O.
-        tokio::spawn(async move {
+        // The JoinHandle is stored in SshTunnel; dropping it aborts this task.
+        let task = tokio::spawn(async move {
             loop {
                 let (mut local_stream, orig_addr) = match listener.accept().await {
                     Ok(pair) => pair,
                     Err(_) => break,
                 };
 
-                // Open a direct-tcpip channel for this connection.
-                // channel_open_direct_tcpip takes &self so handle stays in the loop.
                 let channel = match handle
                     .channel_open_direct_tcpip(
                         &target_host,
@@ -120,10 +127,13 @@ impl SshTunnel {
                     .await
                 {
                     Ok(ch) => ch,
-                    Err(_) => continue, // channel open failed; drop connection
+                    // SSH session is dead — break so the task exits cleanly.
+                    // The Drop impl on SshTunnel won't be triggered here (we're inside the task),
+                    // but the DB pool's next operation will fail with an IO error, which triggers
+                    // reconnect logic in the command layer that replaces this tunnel entirely.
+                    Err(_) => break,
                 };
 
-                // Bidirectional copy between local TCP stream and SSH channel.
                 tokio::spawn(async move {
                     let mut ssh_stream = channel.into_stream();
                     tokio::io::copy_bidirectional(&mut local_stream, &mut ssh_stream)
@@ -133,7 +143,7 @@ impl SshTunnel {
             }
         });
 
-        Ok(SshTunnel { local_port })
+        Ok(SshTunnel { local_port, _task: task })
     }
 
     pub fn local_port(&self) -> u16 {

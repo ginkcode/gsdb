@@ -23,14 +23,19 @@ use sqlserver::SqlServerDriver;
 // ── Public handle ─────────────────────────────────────────────────────────────
 
 /// Cheaply cloneable handle to a database connection.
-/// Wraps `Arc<dyn Driver>` so the enum variant is invisible to callers.
+/// Holds the driver and, when using SSH, the tunnel. The tunnel's Drop impl
+/// aborts the accept-loop task when the last clone of this pool is dropped.
 #[derive(Clone)]
-pub struct DbPool(Arc<dyn Driver>);
+pub struct DbPool {
+    driver: Arc<dyn Driver>,
+    _tunnel: Option<Arc<SshTunnel>>,
+}
 
 impl DbPool {
     pub async fn connect(conn: &Connection) -> Result<Self, DbError> {
         // Resolve SSH tunnel if configured, yielding an optional local port.
         // For sqlx drivers we build a URL; for SQL Server we use host/port directly.
+        let mut ssh_tunnel: Option<Arc<SshTunnel>> = None;
         let tunnel_port: Option<u16> = if let Some(ssh) = &conn.ssh {
             let target_host = conn.host.clone().unwrap_or_else(|| "localhost".to_string());
             let target_port = conn.port.unwrap_or(match conn.driver.as_str() {
@@ -48,7 +53,7 @@ impl DbPool {
             .map_err(DbError::Config)?;
 
             let local_port = tunnel.local_port();
-            let _ = tunnel;
+            ssh_tunnel = Some(Arc::new(tunnel));
             Some(local_port)
         } else {
             None
@@ -129,15 +134,15 @@ impl DbPool {
             d => return Err(DbError::Config(format!("unknown driver: {d}"))),
         };
 
-        Ok(DbPool(driver))
+        Ok(DbPool { driver, _tunnel: ssh_tunnel })
     }
 
     pub fn dialect(&self) -> Dialect {
-        self.0.dialect()
+        self.driver.dialect()
     }
 
     pub async fn run_query(&self, sql: &str) -> Result<QueryResult, DbError> {
-        self.0.run_query(sql).await
+        self.driver.run_query(sql).await
     }
 
     pub async fn stream_query(
@@ -145,22 +150,22 @@ impl DbPool {
         sql: &str,
         tx: tokio::sync::mpsc::Sender<StreamUpdate>,
     ) -> Result<(), DbError> {
-        self.0.stream_query(sql, tx).await
+        self.driver.stream_query(sql, tx).await
     }
 
     pub async fn list_tables(&self) -> Result<Vec<TableInfo>, DbError> {
-        self.0.list_tables().await
+        self.driver.list_tables().await
     }
 
     pub async fn list_databases(&self) -> Result<Vec<String>, DbError> {
-        self.0.list_databases().await
+        self.driver.list_databases().await
     }
 
     pub async fn get_column_nullable(
         &self,
         table_name: &str,
     ) -> Result<HashMap<String, bool>, DbError> {
-        self.0.get_column_nullable(table_name).await
+        self.driver.get_column_nullable(table_name).await
     }
 
     pub async fn create_database(&self, db_name: &str) -> Result<(), DbError> {
@@ -170,22 +175,22 @@ impl DbPool {
         {
             return Err(DbError::Config("Invalid database name".into()));
         }
-        self.0.create_database(db_name).await
+        self.driver.create_database(db_name).await
     }
 
     pub async fn get_table_definition(&self, table_name: &str) -> Result<String, DbError> {
-        self.0.get_table_definition(table_name).await
+        self.driver.get_table_definition(table_name).await
     }
 
     pub async fn get_schema(&self) -> Result<SchemaGraph, DbError> {
-        self.0.get_schema().await
+        self.driver.get_schema().await
     }
 
     pub async fn get_server_info(&self) -> Result<ServerInfo, DbError> {
-        self.0.get_server_info().await
+        self.driver.get_server_info().await
     }
 
     pub async fn close(&self) -> Result<(), DbError> {
-        self.0.close().await
+        self.driver.close().await
     }
 }
