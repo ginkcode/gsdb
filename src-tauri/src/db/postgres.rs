@@ -406,11 +406,69 @@ impl Driver for PostgresDriver {
         Ok(out)
     }
 
+    async fn get_table_custom_types_sql(&self, table_name: &str) -> Result<String, DbError> {
+        // Find all ENUM types used directly by columns of this table.
+        // Also handles arrays of enums (stored as _enumname in pg_type).
+        let rows = sqlx::query(
+            "SELECT t.typname, e.enumlabel \
+             FROM pg_attribute a \
+             JOIN pg_class c ON c.oid = a.attrelid \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+             JOIN pg_type at ON at.oid = a.atttypid \
+             JOIN pg_type t ON ( \
+               (t.oid = at.oid AND at.typtype = 'e') \
+               OR (t.oid = at.typelem AND at.typtype = 'b' AND at.typcategory = 'A' \
+                   AND EXISTS (SELECT 1 FROM pg_enum WHERE enumtypid = at.typelem)) \
+             ) \
+             JOIN pg_enum e ON e.enumtypid = t.oid \
+             WHERE c.relname = $1 AND n.nspname = 'public' AND a.attnum > 0 \
+             ORDER BY t.typname, e.enumsortorder",
+        )
+        .bind(table_name)
+        .fetch_all(&self.0)
+        .await?;
+
+        if rows.is_empty() {
+            return Ok(String::new());
+        }
+
+        // Group labels by type name
+        let mut types: Vec<(String, Vec<String>)> = Vec::new();
+        for row in &rows {
+            let type_name: String = row.try_get(0)?;
+            let label: String = row.try_get(1)?;
+            if types.last().map(|(n, _)| n.as_str()) == Some(type_name.as_str()) {
+                types.last_mut().unwrap().1.push(label);
+            } else {
+                types.push((type_name, vec![label]));
+            }
+        }
+
+        // Use a DO block so this is a no-op when the type already exists,
+        // safe to run against a database that already has it.
+        let mut out = String::from("-- Custom Types\n");
+        for (type_name, labels) in &types {
+            let label_list = labels
+                .iter()
+                .map(|l| format!("'{}'", l.replace('\'', "''")))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!(
+                "DO $$ BEGIN \
+                 CREATE TYPE \"{}\" AS ENUM ({}); \
+                 EXCEPTION WHEN duplicate_object THEN NULL; END $$;\n",
+                type_name, label_list
+            ));
+        }
+        out.push('\n');
+        Ok(out)
+    }
+
     async fn import_all_statements(
         &self,
         main: Vec<String>,
         on_error: Vec<String>,
-        mut on_stmt_done: Box<dyn FnMut() + Send>,
+        mut on_stmt_done: Box<dyn FnMut() -> bool + Send>,
     ) -> Result<usize, DbError> {
         let mut conn = self.0.acquire().await.map_err(DbError::Sqlx)?;
         let mut count = 0;
@@ -422,7 +480,12 @@ impl Driver for PostgresDriver {
                 return Err(DbError::Sqlx(e));
             }
             count += 1;
-            on_stmt_done();
+            if !on_stmt_done() {
+                for s in &on_error {
+                    let _ = sqlx::query(s).execute(&mut *conn).await;
+                }
+                return Err(DbError::Cancelled);
+            }
         }
         Ok(count)
     }

@@ -548,7 +548,7 @@ impl Driver for SqlServerDriver {
         &self,
         main: Vec<String>,
         on_error: Vec<String>,
-        mut on_stmt_done: Box<dyn FnMut() + Send>,
+        mut on_stmt_done: Box<dyn FnMut() -> bool + Send>,
     ) -> Result<usize, DbError> {
         let mut conn = self.pool.get().await.map_err(|e| DbError::Config(e.to_string()))?;
         let mut count = 0;
@@ -557,7 +557,6 @@ impl Driver for SqlServerDriver {
             // borrow on conn is fully dropped before we issue cleanup queries.
             let err_msg: Option<String> = match conn.simple_query(stmt.as_str()).await {
                 Ok(stream) => {
-                    // Drain the stream to completion (required by tiberius)
                     use futures::TryStreamExt;
                     match stream.try_collect::<Vec<_>>().await {
                         Ok(_) => None,
@@ -568,7 +567,6 @@ impl Driver for SqlServerDriver {
             };
             if let Some(msg) = err_msg {
                 for s in &on_error {
-                    // Best-effort cleanup; drain the stream so the borrow ends
                     if let Ok(stream) = conn.simple_query(s.as_str()).await {
                         use futures::TryStreamExt;
                         let _ = stream.try_collect::<Vec<_>>().await;
@@ -577,7 +575,15 @@ impl Driver for SqlServerDriver {
                 return Err(DbError::Config(msg));
             }
             count += 1;
-            on_stmt_done();
+            if !on_stmt_done() {
+                for s in &on_error {
+                    if let Ok(stream) = conn.simple_query(s.as_str()).await {
+                        use futures::TryStreamExt;
+                        let _ = stream.try_collect::<Vec<_>>().await;
+                    }
+                }
+                return Err(DbError::Cancelled);
+            }
         }
         Ok(count)
     }

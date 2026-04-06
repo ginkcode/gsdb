@@ -101,7 +101,8 @@ export type ExportProgress =
 export type ImportProgress =
   | { type: "progress"; done: number; total: number }
   | { type: "done"; count: number }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "cancelled" };
 
 export interface QueryTab {
   id: string;

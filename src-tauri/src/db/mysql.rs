@@ -303,7 +303,7 @@ impl Driver for MySqlDriver {
         &self,
         main: Vec<String>,
         on_error: Vec<String>,
-        mut on_stmt_done: Box<dyn FnMut() + Send>,
+        mut on_stmt_done: Box<dyn FnMut() -> bool + Send>,
     ) -> Result<usize, DbError> {
         let mut conn = self.0.acquire().await.map_err(DbError::Sqlx)?;
         let mut count = 0;
@@ -315,7 +315,12 @@ impl Driver for MySqlDriver {
                 return Err(DbError::Sqlx(e));
             }
             count += 1;
-            on_stmt_done();
+            if !on_stmt_done() {
+                for s in &on_error {
+                    let _ = sqlx::query(s).execute(&mut *conn).await;
+                }
+                return Err(DbError::Cancelled);
+            }
         }
         Ok(count)
     }

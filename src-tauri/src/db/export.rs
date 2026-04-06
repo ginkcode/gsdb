@@ -1,3 +1,4 @@
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use serde_json::Value;
 
 use super::{DbError, DbPool, Dialect, ExportProgress};
@@ -152,7 +153,18 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
 }
 
 impl DbPool {
-    pub async fn export_table_sql(&self, table_name: &str) -> Result<String, DbError> {
+    fn driver_name(&self) -> &'static str {
+        match self.dialect() {
+            Dialect::Postgres => "PostgreSQL",
+            Dialect::Mysql => "MySQL",
+            Dialect::Sqlite => "SQLite",
+            Dialect::SqlServer => "SQL Server",
+        }
+    }
+
+    /// DDL + INSERTs for one table, no transaction wrapper.
+    /// Used as a building block by both single-table and database exports.
+    async fn table_sql_body(&self, table_name: &str) -> Result<String, DbError> {
         let is_mysql = self.dialect() == Dialect::Mysql;
         let q = quote_ident(table_name, is_mysql);
         let fq = if self.dialect() == Dialect::Postgres {
@@ -166,11 +178,8 @@ impl DbPool {
             .strip_prefix("-- Table Definition\n")
             .unwrap_or(&ddl_raw);
 
-        // CASCADE: if other tables have FKs pointing here, drop them too so the
-        // import doesn't fail with "referenced by..." errors.
         let drop = match self.dialect() {
             Dialect::Postgres => format!("DROP TABLE IF EXISTS {} CASCADE;\n", fq),
-            Dialect::Sqlite => format!("DROP TABLE IF EXISTS {};\n", fq), // SQLite ignores CASCADE
             _ => format!("DROP TABLE IF EXISTS {};\n", fq),
         };
 
@@ -205,16 +214,29 @@ impl DbPool {
         Ok(out)
     }
 
+    /// Standalone single-table export.
+    /// One BEGIN/COMMIT wrapping custom types + DDL + INSERTs.
+    pub async fn export_table_sql(&self, table_name: &str) -> Result<String, DbError> {
+        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+        let mut out = format!(
+            "-- GSDB SQL Export\n-- Driver: {}\n-- Table: {}\n-- Generated: {}\n\nBEGIN;\n\n",
+            self.driver_name(), table_name, timestamp
+        );
+
+        let types_sql = self.get_table_custom_types_sql(table_name).await?;
+        if !types_sql.is_empty() {
+            out.push_str(&types_sql);
+        }
+
+        out.push_str(&self.table_sql_body(table_name).await?);
+        out.push_str("COMMIT;\n");
+        Ok(out)
+    }
+
     pub async fn export_database_sql<F>(&self, mut on_progress: F) -> Result<String, DbError>
     where
         F: FnMut(ExportProgress),
     {
-        let driver_name = match self.dialect() {
-            Dialect::Postgres => "PostgreSQL",
-            Dialect::Mysql => "MySQL",
-            Dialect::Sqlite => "SQLite",
-            Dialect::SqlServer => "SQL Server",
-        };
         let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
 
         // Collect tables (exclude views from INSERT export)
@@ -226,7 +248,7 @@ impl DbPool {
 
         let mut out = format!(
             "-- GSDB SQL Export\n-- Driver: {}\n-- Generated: {}\n\nBEGIN;\n\n",
-            driver_name, timestamp
+            self.driver_name(), timestamp
         );
 
         // Emit custom types (ENUMs, DOMAINs) before any table DDL
@@ -242,7 +264,10 @@ impl DbPool {
                 total: tables.len(),
             });
             out.push_str(&format!("-- Table: {}\n", table.name));
-            out.push_str(&self.export_table_sql(&table.name).await?);
+            // Use table_sql_body (no BEGIN/COMMIT) — the database export has its own
+            // single transaction wrapping everything. Calling export_table_sql here
+            // would create nested transactions which no database supports.
+            out.push_str(&self.table_sql_body(&table.name).await?);
         }
 
         // FK constraints: emitted after all tables so referenced tables exist
@@ -263,7 +288,6 @@ impl DbPool {
         }
 
         out.push_str("COMMIT;\n");
-        on_progress(ExportProgress::Done);
         Ok(out)
     }
 
@@ -271,6 +295,7 @@ impl DbPool {
         &self,
         sql: &str,
         disable_fk_checks: bool,
+        cancel: Arc<AtomicBool>,
         mut on_progress: F,
     ) -> Result<usize, DbError>
     where
@@ -327,6 +352,7 @@ impl DbPool {
         }
 
         // Progress callback counts only user statements (skips prefix/suffix).
+        // Returns false (cancel) if the cancel flag is set.
         let user_end = prefix + user_total;
         let mut call_count = 0usize;
 
@@ -334,10 +360,14 @@ impl DbPool {
             main,
             on_error,
             Box::new(move || {
+                if cancel.load(Ordering::Relaxed) {
+                    return false;
+                }
                 call_count += 1;
                 if call_count > prefix && call_count <= user_end {
                     on_progress(call_count - prefix, user_total);
                 }
+                true
             }),
         )
         .await

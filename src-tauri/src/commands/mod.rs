@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use tauri::State;
 use tokio::sync::{oneshot, Mutex};
 
@@ -43,6 +44,7 @@ pub struct AppState {
     pub connections: Mutex<HashMap<String, Connection>>,
     pub pools: Mutex<HashMap<String, DbPool>>,
     pub running_queries: Mutex<HashMap<String, oneshot::Sender<()>>>,
+    pub import_cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl AppState {
@@ -51,6 +53,7 @@ impl AppState {
             connections: Mutex::new(HashMap::new()),
             pools: Mutex::new(HashMap::new()),
             running_queries: Mutex::new(HashMap::new()),
+            import_cancels: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -395,7 +398,9 @@ pub async fn export_database(
         })
         .await
         .map_err(|e| e.to_string())?;
-    std::fs::write(&file_path, sql).map_err(|e| e.to_string())
+    std::fs::write(&file_path, sql).map_err(|e| e.to_string())?;
+    on_event.send(ExportProgress::Done).ok();
+    Ok(())
 }
 
 #[tauri::command]
@@ -413,19 +418,47 @@ pub async fn import_sql(
             .ok_or_else(|| "Connection not found".to_string())?
             .clone()
     };
+
+    // Register a cancellation flag for this connection's import
+    let cancel = Arc::new(AtomicBool::new(false));
+    state.import_cancels.lock().await.insert(connection_id.clone(), cancel.clone());
+
     let sql = std::fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
     let on_event_clone = on_event.clone();
-    let count = pool
-        .import_sql(&sql, disable_fk_checks, move |done, total| {
+    let result = pool
+        .import_sql(&sql, disable_fk_checks, cancel, move |done, total| {
             on_event_clone.send(ImportProgress::Progress { done, total }).ok();
         })
-        .await
-        .map_err(|e| {
+        .await;
+
+    // Always clean up the cancel flag
+    state.import_cancels.lock().await.remove(&connection_id);
+
+    match result {
+        Ok(count) => {
+            on_event.send(ImportProgress::Done { count }).ok();
+            Ok(format!("{} statement(s) executed", count))
+        }
+        Err(crate::db::DbError::Cancelled) => {
+            on_event.send(ImportProgress::Cancelled).ok();
+            Err("Import cancelled".to_string())
+        }
+        Err(e) => {
             on_event.send(ImportProgress::Error { message: e.to_string() }).ok();
-            e.to_string()
-        })?;
-    on_event.send(ImportProgress::Done { count }).ok();
-    Ok(format!("{} statement(s) executed", count))
+            Err(e.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn cancel_import(
+    connection_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if let Some(flag) = state.import_cancels.lock().await.get(&connection_id) {
+        flag.store(true, Ordering::Relaxed);
+    }
+    Ok(())
 }
 
 #[tauri::command]

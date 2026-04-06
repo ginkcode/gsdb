@@ -45,6 +45,7 @@ pub enum Dialect {
 pub enum DbError {
     Sqlx(sqlx::Error),
     Config(String),
+    Cancelled,
 }
 
 impl std::fmt::Display for DbError {
@@ -52,6 +53,7 @@ impl std::fmt::Display for DbError {
         match self {
             DbError::Sqlx(e) => write!(f, "{e}"),
             DbError::Config(e) => write!(f, "{e}"),
+            DbError::Cancelled => write!(f, "Import cancelled"),
         }
     }
 }
@@ -86,6 +88,7 @@ impl DbError {
                     || m.contains("transport error")
                     || m.contains("channel open failed")
             }
+            DbError::Cancelled => false,
         }
     }
 }
@@ -145,6 +148,13 @@ pub trait Driver: Send + Sync {
         Ok(String::new())
     }
 
+    /// Returns SQL to ensure custom types used by a specific table exist.
+    /// Uses a safe "create if not exists" pattern so it can be run against a
+    /// database that may already have the type. Default: empty.
+    async fn get_table_custom_types_sql(&self, _table_name: &str) -> Result<String, DbError> {
+        Ok(String::new())
+    }
+
     /// Returns ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY … statements for all FK
     /// constraints in the database. Emitted after all CREATE TABLE statements so that
     /// referenced tables are guaranteed to exist. Default: empty.
@@ -153,8 +163,11 @@ pub trait Driver: Send + Sync {
     }
 
     /// Execute all `main` statements on a **single database connection**, calling
-    /// `on_stmt_done` after each one. If any statement fails, runs each `on_error`
-    /// statement on the same connection (ignoring errors) then returns the failure.
+    /// `on_stmt_done` after each one. `on_stmt_done` returns `true` to continue or
+    /// `false` to cancel (triggers rollback via `on_error` then returns `DbError::Cancelled`).
+    ///
+    /// If any statement fails, runs each `on_error` statement on the same connection
+    /// (ignoring errors) then returns the failure.
     ///
     /// This is required for imports: session variables (FK-check disable) and DDL
     /// visibility within a transaction are connection-scoped, not pool-scoped.
@@ -165,7 +178,7 @@ pub trait Driver: Send + Sync {
         &self,
         main: Vec<String>,
         on_error: Vec<String>,
-        on_stmt_done: Box<dyn FnMut() + Send>,
+        on_stmt_done: Box<dyn FnMut() -> bool + Send>,
     ) -> Result<usize, DbError> {
         let mut on_stmt_done = on_stmt_done;
         let mut count = 0;
@@ -177,7 +190,12 @@ pub trait Driver: Send + Sync {
                 return Err(e);
             }
             count += 1;
-            on_stmt_done();
+            if !on_stmt_done() {
+                for s in &on_error {
+                    let _ = self.run_query(s).await;
+                }
+                return Err(DbError::Cancelled);
+            }
         }
         Ok(count)
     }
@@ -213,6 +231,7 @@ pub enum ImportProgress {
     #[serde(rename_all = "camelCase")]
     Done { count: usize },
     Error { message: String },
+    Cancelled,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

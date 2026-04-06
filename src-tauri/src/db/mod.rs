@@ -190,6 +190,10 @@ impl DbPool {
         self.driver.get_custom_types_sql().await
     }
 
+    pub async fn get_table_custom_types_sql(&self, table_name: &str) -> Result<String, DbError> {
+        self.driver.get_table_custom_types_sql(table_name).await
+    }
+
     pub async fn get_fk_constraints_sql(&self) -> Result<String, DbError> {
         self.driver.get_fk_constraints_sql().await
     }
@@ -198,7 +202,7 @@ impl DbPool {
         &self,
         main: Vec<String>,
         on_error: Vec<String>,
-        on_stmt_done: Box<dyn FnMut() + Send>,
+        on_stmt_done: Box<dyn FnMut() -> bool + Send>,
     ) -> Result<usize, DbError> {
         self.driver.import_all_statements(main, on_error, on_stmt_done).await
     }

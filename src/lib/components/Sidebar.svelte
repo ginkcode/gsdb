@@ -390,12 +390,17 @@
   let exportProgressIndex = $state(0);
   let exportProgressTotal = $state(0);
 
+  function utcTimestamp(): string {
+    return new Date().toISOString().replace(/[-:]/g, "").replace("T", "_").slice(0, 15) + "Z";
+  }
+
   async function exportDatabase(conn: Connection) {
     const downloads = await downloadDir();
+    const ts = utcTimestamp();
     const filePath = await save({
       defaultPath: downloads
-        ? `${downloads}/${conn.name}_export.sql`
-        : `${conn.name}_export.sql`,
+        ? `${downloads}/${conn.name}_export_${ts}.sql`
+        : `${conn.name}_export_${ts}.sql`,
       filters: [{ name: "SQL Files", extensions: ["sql"] }],
     });
     if (!filePath) return;
@@ -436,10 +441,11 @@
 
   async function exportTable(connId: string, tableName: string) {
     const downloads = await downloadDir();
+    const ts = utcTimestamp();
     const filePath = await save({
       defaultPath: downloads
-        ? `${downloads}/${tableName}_export.sql`
-        : `${tableName}_export.sql`,
+        ? `${downloads}/${tableName}_export_${ts}.sql`
+        : `${tableName}_export_${ts}.sql`,
       filters: [{ name: "SQL Files", extensions: ["sql"] }],
     });
     if (!filePath) return;
@@ -516,6 +522,16 @@
   let importProgressOpen = $state(false);
   let importProgressDone = $state(0);
   let importProgressTotal = $state(0);
+  let importCancelConfirm = $state(false);
+
+  async function requestCancelImport() {
+    importCancelConfirm = true;
+  }
+
+  async function confirmCancelImport() {
+    importCancelConfirm = false;
+    await invoke("cancel_import", { connectionId: importConnId });
+  }
 
   async function confirmImport() {
     importLoading = true;
@@ -530,10 +546,17 @@
         importProgressTotal = progress.total;
       } else if (progress.type === "done") {
         importProgressOpen = false;
+        importCancelConfirm = false;
         importDialogOpen = false;
         toast.success(`${progress.count} statement(s) executed successfully`);
+        refreshTables(importConnId);
+      } else if (progress.type === "cancelled") {
+        importProgressOpen = false;
+        importCancelConfirm = false;
+        toast.info("Import cancelled");
       } else if (progress.type === "error") {
         importProgressOpen = false;
+        importCancelConfirm = false;
         importDialogOpen = false;
         toast.error(`Import failed: ${progress.message}`);
       }
@@ -757,10 +780,16 @@
 
   <!-- Import Progress Dialog -->
   <Dialog.Root bind:open={importProgressOpen}>
-    <Dialog.Content class="sm:max-w-md">
+    <Dialog.Content class="sm:max-w-md" showCloseButton={false} interactOutsideBehavior="ignore" escapeKeydownBehavior="ignore">
       <Dialog.Header>
         <Dialog.Title>Importing SQL</Dialog.Title>
-        <Dialog.Description>Executing SQL statements...</Dialog.Description>
+        <Dialog.Description>
+          {#if importCancelConfirm}
+            Cancel the import? Changes made so far will be rolled back.
+          {:else}
+            Executing SQL statements...
+          {/if}
+        </Dialog.Description>
       </Dialog.Header>
       <div class="py-4">
         <div class="w-full bg-muted rounded-full h-2 overflow-hidden">
@@ -777,6 +806,14 @@
           </p>
         {/if}
       </div>
+      <Dialog.Footer>
+        {#if importCancelConfirm}
+          <Button variant="outline" onclick={() => (importCancelConfirm = false)}>Keep importing</Button>
+          <Button variant="destructive" onclick={confirmCancelImport}>Yes, cancel</Button>
+        {:else}
+          <Button variant="outline" onclick={requestCancelImport}>Cancel</Button>
+        {/if}
+      </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>
 
