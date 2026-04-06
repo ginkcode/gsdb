@@ -92,6 +92,17 @@ export interface ServerInfo {
   extra: [string, string][];
 }
 
+export type ExportProgress =
+  | { type: "started"; totalTables: number }
+  | { type: "table"; name: string; index: number; total: number }
+  | { type: "done" }
+  | { type: "error"; message: string };
+
+export type ImportProgress =
+  | { type: "progress"; done: number; total: number }
+  | { type: "done"; count: number }
+  | { type: "error"; message: string };
+
 export interface QueryTab {
   id: string;
   connectionId: string;

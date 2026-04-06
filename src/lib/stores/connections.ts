@@ -65,8 +65,8 @@ async function setOrDelete(key: string, value: string | undefined): Promise<void
 function _b64(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes));
 }
-function _bytes(b64: string): Uint8Array {
-  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+function _bytes(b64: string): Uint8Array<ArrayBuffer> {
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)) as Uint8Array<ArrayBuffer>;
 }
 
 // Single promise ensures the key is generated only once even under concurrent calls.

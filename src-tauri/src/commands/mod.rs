@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use tauri::State;
 use tokio::sync::{oneshot, Mutex};
 
-use crate::db::{Connection, DbPool, QueryResult, SchemaGraph, StreamUpdate, TableInfo};
+use crate::db::{Connection, DbPool, ExportProgress, ImportProgress, QueryResult, SchemaGraph, StreamUpdate, TableInfo};
 
 // ── Reconnect helpers ─────────────────────────────────────────────────────────
 
@@ -356,6 +356,7 @@ pub async fn export_table(
     connection_id: String,
     table_name: String,
     file_path: String,
+    on_event: tauri::ipc::Channel<ExportProgress>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let pool = {
@@ -369,13 +370,16 @@ pub async fn export_table(
         .export_table_sql(&table_name)
         .await
         .map_err(|e| e.to_string())?;
-    std::fs::write(&file_path, sql).map_err(|e| e.to_string())
+    std::fs::write(&file_path, sql).map_err(|e| e.to_string())?;
+    on_event.send(ExportProgress::Done).ok();
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn export_database(
     connection_id: String,
     file_path: String,
+    on_event: tauri::ipc::Channel<ExportProgress>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let pool = {
@@ -386,7 +390,9 @@ pub async fn export_database(
             .clone()
     };
     let sql = pool
-        .export_database_sql()
+        .export_database_sql(|progress| {
+            on_event.send(progress).ok();
+        })
         .await
         .map_err(|e| e.to_string())?;
     std::fs::write(&file_path, sql).map_err(|e| e.to_string())
@@ -397,6 +403,7 @@ pub async fn import_sql(
     connection_id: String,
     file_path: String,
     disable_fk_checks: bool,
+    on_event: tauri::ipc::Channel<ImportProgress>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let pool = {
@@ -407,10 +414,17 @@ pub async fn import_sql(
             .clone()
     };
     let sql = std::fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
+    let on_event_clone = on_event.clone();
     let count = pool
-        .import_sql(&sql, disable_fk_checks)
+        .import_sql(&sql, disable_fk_checks, move |done, total| {
+            on_event_clone.send(ImportProgress::Progress { done, total }).ok();
+        })
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            on_event.send(ImportProgress::Error { message: e.to_string() }).ok();
+            e.to_string()
+        })?;
+    on_event.send(ImportProgress::Done { count }).ok();
     Ok(format!("{} statement(s) executed", count))
 }
 

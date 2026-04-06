@@ -25,7 +25,7 @@
     "@tauri-apps/plugin-store": "^2.4.2",
     "@tauri-apps/plugin-window-state": "^2.4.1",
     "@xyflow/svelte": "^1.5.2",
-    "codemirror": "^6.65.7",
+    "codemirror": "6.0.2",
     "sql-formatter": "^15.7.3",
     "tauri-plugin-keyring-api": "^0.1.1"
   },

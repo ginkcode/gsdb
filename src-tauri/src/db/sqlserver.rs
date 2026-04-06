@@ -1,13 +1,9 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
 use tiberius::xml::XmlData;
-use tiberius::{AuthMethod, Client, ColumnType, Config, EncryptionLevel, Row};
-use tokio::net::TcpStream;
-use tokio::sync::Mutex;
-use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
+use tiberius::{AuthMethod, ColumnType, Config, EncryptionLevel, Row};
 
 use super::driver::{DbError, Dialect, Driver, ServerInfo, StreamUpdate};
 use super::types::{
@@ -17,7 +13,7 @@ use super::types::{
 // ── Driver ────────────────────────────────────────────────────────────────────
 
 pub struct SqlServerDriver {
-    client: Arc<Mutex<Option<Client<Compat<TcpStream>>>>>,
+    pool: bb8::Pool<bb8_tiberius::ConnectionManager>,
 }
 
 impl SqlServerDriver {
@@ -37,57 +33,31 @@ impl SqlServerDriver {
         }
         config.authentication(AuthMethod::sql_server(username, password));
 
-        // Configure SSL/TLS based on ssl_mode
-        // SQL Server SSL modes:
-        // - "disable" / "allow" -> No encryption (or encrypt if server supports)
-        // - "prefer" / "preferred" -> Encrypt but don't verify certificate (default)
-        // - "require" -> Require encryption, don't verify certificate
-        // - "verify" / "verify-ca" -> Require encryption and verify certificate
         match ssl_mode.unwrap_or("prefer") {
-            "disable" => {
-                // No encryption - DANGER_PLAINTEXT
+            "disable" | "allow" => {
                 config.encryption(EncryptionLevel::NotSupported);
             }
-            "allow" => {
-                // Encrypt if server supports it, allow unencrypted
-                // tiberius doesn't have an "allow" equivalent, use NotSupported
-                config.encryption(EncryptionLevel::NotSupported);
-            }
-            "prefer" | "preferred" => {
-                // Default: encrypt but trust any certificate
-                config.encryption(EncryptionLevel::Required);
-                config.trust_cert();
-            }
-            "require" => {
-                // Require encryption, trust any certificate
+            "prefer" | "preferred" | "require" => {
                 config.encryption(EncryptionLevel::Required);
                 config.trust_cert();
             }
             "verify" | "verify-ca" | "verify-full" => {
-                // Require encryption and verify certificate against system trust store
                 config.encryption(EncryptionLevel::Required);
-                // Don't call trust_cert() - verify against system certificates
             }
             _ => {
-                // Unknown mode, use default (encrypt, trust any cert)
                 config.encryption(EncryptionLevel::Required);
                 config.trust_cert();
             }
         }
 
-        let tcp = TcpStream::connect(config.get_addr())
-            .await
-            .map_err(|e| DbError::Config(e.to_string()))?;
-        tcp.set_nodelay(true)
-            .map_err(|e| DbError::Config(e.to_string()))?;
-
-        let client = Client::connect(config, tcp.compat_write())
+        let manager = bb8_tiberius::ConnectionManager::new(config);
+        let pool = bb8::Pool::builder()
+            .max_size(3)
+            .build(manager)
             .await
             .map_err(|e| DbError::Config(e.to_string()))?;
 
-        Ok(Self {
-            client: Arc::new(Mutex::new(Some(client))),
-        })
+        Ok(Self { pool })
     }
 }
 
@@ -98,9 +68,8 @@ impl SqlServerDriver {
         let escaped = sql.replace('\'', "''");
         let meta_sql = format!("EXEC sp_describe_first_result_set N'{escaped}'");
 
-        let mut guard = self.client.lock().await;
-        let client = guard.as_mut()?;
-        let rows = client
+        let mut conn = self.pool.get().await.ok()?;
+        let rows = conn
             .simple_query(&meta_sql)
             .await
             .ok()?
@@ -158,73 +127,55 @@ impl Driver for SqlServerDriver {
             .maybe_wrap_variant_sql(sql)
             .await
             .unwrap_or_else(|| sql.to_string());
-        let client_arc = Arc::clone(&self.client);
 
-        tokio::spawn(async move {
-            let mut guard = client_arc.lock().await;
-            let client = guard
-                .as_mut()
-                .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
-            let stream = client
-                .simple_query(&sql)
-                .await
-                .map_err(|e| DbError::Config(e.to_string()))?;
+        let mut conn = self.pool.get().await.map_err(|e| DbError::Config(e.to_string()))?;
+        let rows = conn
+            .simple_query(&sql)
+            .await
+            .map_err(|e| DbError::Config(e.to_string()))?
+            .into_first_result()
+            .await
+            .map_err(|e| DbError::Config(e.to_string()))?;
 
-            let rows = stream
-                .into_first_result()
-                .await
-                .map_err(|e| DbError::Config(e.to_string()))?;
+        if rows.is_empty() {
+            return Ok(QueryResult {
+                columns: vec![],
+                column_types: vec![],
+                column_nullable: vec![],
+                rows: vec![],
+                rows_affected: Some(0),
+            });
+        }
 
-            if rows.is_empty() {
-                return Ok(QueryResult {
-                    columns: vec![],
-                    column_types: vec![],
-                    column_nullable: vec![],
-                    rows: vec![],
-                    rows_affected: Some(0),
-                });
-            }
+        let columns: Vec<String> = rows[0]
+            .columns()
+            .iter()
+            .map(|c| c.name().to_string())
+            .collect();
+        let column_types: Vec<String> = rows[0]
+            .columns()
+            .iter()
+            .map(|c| col_type_name(c.column_type()))
+            .collect();
+        let column_nullable = vec![true; columns.len()];
 
-            let columns: Vec<String> = rows[0]
-                .columns()
-                .iter()
-                .map(|c| c.name().to_string())
-                .collect();
-            let column_types: Vec<String> = rows[0]
-                .columns()
-                .iter()
-                .map(|c| col_type_name(c.column_type()))
-                .collect();
-            let column_nullable = vec![true; columns.len()];
-
-            let result_rows = rows
-                .iter()
-                .map(|row| {
-                    columns
-                        .iter()
-                        .enumerate()
-                        .map(|(i, col)| (col.clone(), mssql_value(row, i)))
-                        .collect()
-                })
-                .collect();
-
-            Ok(QueryResult {
-                columns,
-                column_types,
-                column_nullable,
-                rows: result_rows,
-                rows_affected: None,
+        let result_rows = rows
+            .iter()
+            .map(|row| {
+                columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, col)| (col.clone(), mssql_value(row, i)))
+                    .collect()
             })
-        })
-        .await
-        .unwrap_or_else(|e| {
-            Err(DbError::Config(if e.is_panic() {
-                "Query contains an unsupported column type (sql_variant). \
-                 Cast it to a supported type, e.g. CAST(col AS NVARCHAR(MAX))."
-                    .to_string()
-            } else {
-                e.to_string()
-            }))
+            .collect();
+
+        Ok(QueryResult {
+            columns,
+            column_types,
+            column_nullable,
+            rows: result_rows,
+            rows_affected: None,
         })
     }
 
@@ -239,101 +190,88 @@ impl Driver for SqlServerDriver {
             .maybe_wrap_variant_sql(sql)
             .await
             .unwrap_or_else(|| sql.to_string());
-        let client_arc = Arc::clone(&self.client);
+        use futures::TryStreamExt;
 
-        tokio::spawn(async move {
-            use futures::TryStreamExt;
+        let mut conn = self.pool.get().await.map_err(|e| DbError::Config(e.to_string()))?;
+        let mut tib_stream = conn
+            .simple_query(&sql)
+            .await
+            .map_err(|e| DbError::Config(e.to_string()))?;
 
-            let mut guard = client_arc.lock().await;
-            let client = guard
-                .as_mut()
-                .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
+        let mut columns: Vec<String> = vec![];
+        let mut header_sent = false;
+        let mut batch: Vec<std::collections::HashMap<String, serde_json::Value>> =
+            Vec::with_capacity(BATCH);
 
-            let mut tib_stream = client
-                .simple_query(&sql)
-                .await
-                .map_err(|e| DbError::Config(e.to_string()))?;
+        while let Some(item) = tib_stream
+            .try_next()
+            .await
+            .map_err(|e: tiberius::error::Error| DbError::Config(e.to_string()))?
+        {
+            match item {
+                tiberius::QueryItem::Metadata(meta) if !header_sent => {
+                    columns = meta.columns().iter().map(|c| c.name().to_string()).collect();
+                    let column_types = meta
+                        .columns()
+                        .iter()
+                        .map(|c| col_type_name(c.column_type()))
+                        .collect();
+                    if tx
+                        .send(StreamUpdate::Header {
+                            columns: columns.clone(),
+                            column_types,
+                            column_nullable: vec![true; columns.len()],
+                        })
+                        .await
+                        .is_err()
+                    {
+                        return Ok(());
+                    }
+                    header_sent = true;
+                }
+                tiberius::QueryItem::Row(row) => {
+                    let row_map = columns
+                        .iter()
+                        .enumerate()
+                        .map(|(i, col)| (col.clone(), mssql_value(&row, i)))
+                        .collect();
+                    batch.push(row_map);
 
-            let mut columns: Vec<String> = vec![];
-            let mut header_sent = false;
-            let mut batch: Vec<std::collections::HashMap<String, serde_json::Value>> =
-                Vec::with_capacity(BATCH);
-
-            while let Some(item) = tib_stream
-                .try_next()
-                .await
-                .map_err(|e: tiberius::error::Error| DbError::Config(e.to_string()))?
-            {
-                match item {
-                    tiberius::QueryItem::Metadata(meta) if !header_sent => {
-                        columns = meta.columns().iter().map(|c| c.name().to_string()).collect();
-                        let column_types = meta
-                            .columns()
-                            .iter()
-                            .map(|c| col_type_name(c.column_type()))
-                            .collect();
+                    if batch.len() >= BATCH {
                         if tx
-                            .send(StreamUpdate::Header {
-                                columns: columns.clone(),
-                                column_types,
-                                column_nullable: vec![true; columns.len()],
+                            .send(StreamUpdate::Rows {
+                                rows: std::mem::take(&mut batch),
                             })
                             .await
                             .is_err()
                         {
                             return Ok(());
                         }
-                        header_sent = true;
                     }
-                    tiberius::QueryItem::Row(row) => {
-                        let row_map = columns
-                            .iter()
-                            .enumerate()
-                            .map(|(i, col)| (col.clone(), mssql_value(&row, i)))
-                            .collect();
-                        batch.push(row_map);
-
-                        if batch.len() >= BATCH {
-                            if tx
-                                .send(StreamUpdate::Rows {
-                                    rows: std::mem::take(&mut batch),
-                                })
-                                .await
-                                .is_err()
-                            {
-                                return Ok(());
-                            }
-                        }
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
+        }
 
-            if !header_sent {
-                let _ = tx
-                    .send(StreamUpdate::Header {
-                        columns: vec![],
-                        column_types: vec![],
-                        column_nullable: vec![],
-                    })
-                    .await;
-            } else if !batch.is_empty() {
-                let _ = tx.send(StreamUpdate::Rows { rows: batch }).await;
-            }
+        if !header_sent {
+            let _ = tx
+                .send(StreamUpdate::Header {
+                    columns: vec![],
+                    column_types: vec![],
+                    column_nullable: vec![],
+                })
+                .await;
+        } else if !batch.is_empty() {
+            let _ = tx.send(StreamUpdate::Rows { rows: batch }).await;
+        }
 
-            let _ = tx.send(StreamUpdate::Done { rows_affected: None }).await;
-            Ok(())
-        })
-        .await
-        .unwrap_or_else(|e| Err(DbError::Config(e.to_string())))
+        let _ = tx.send(StreamUpdate::Done { rows_affected: None }).await;
+        Ok(())
     }
 
     async fn list_tables(&self) -> Result<Vec<TableInfo>, DbError> {
-        let mut guard = self.client.lock().await;
-        let client = guard
-            .as_mut()
-            .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
-        let rows = client
+        let mut conn = self.pool.get().await.map_err(|e| DbError::Config(e.to_string()))?;
+        let rows = conn
             .simple_query(
                 "SELECT TABLE_NAME, TABLE_TYPE \
                  FROM INFORMATION_SCHEMA.TABLES \
@@ -360,11 +298,8 @@ impl Driver for SqlServerDriver {
     }
 
     async fn list_databases(&self) -> Result<Vec<String>, DbError> {
-        let mut guard = self.client.lock().await;
-        let client = guard
-            .as_mut()
-            .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
-        let rows = client
+        let mut conn = self.pool.get().await.map_err(|e| DbError::Config(e.to_string()))?;
+        let rows = conn
             .simple_query("SELECT name FROM sys.databases ORDER BY name")
             .await
             .map_err(|e| DbError::Config(e.to_string()))?
@@ -382,10 +317,7 @@ impl Driver for SqlServerDriver {
         &self,
         table_name: &str,
     ) -> Result<HashMap<String, bool>, DbError> {
-        let mut guard = self.client.lock().await;
-        let client = guard
-            .as_mut()
-            .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
+        let mut conn = self.pool.get().await.map_err(|e| DbError::Config(e.to_string()))?;
         let sql = format!(
             "SELECT COLUMN_NAME, IS_NULLABLE \
              FROM INFORMATION_SCHEMA.COLUMNS \
@@ -393,7 +325,7 @@ impl Driver for SqlServerDriver {
              ORDER BY ORDINAL_POSITION",
             table_name.replace('\'', "''")
         );
-        let rows = client
+        let rows = conn
             .simple_query(&sql)
             .await
             .map_err(|e| DbError::Config(e.to_string()))?
@@ -418,10 +350,7 @@ impl Driver for SqlServerDriver {
     }
 
     async fn get_schema(&self) -> Result<SchemaGraph, DbError> {
-        let mut guard = self.client.lock().await;
-        let client = guard
-            .as_mut()
-            .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
+        let mut conn = self.pool.get().await.map_err(|e| DbError::Config(e.to_string()))?;
 
         let col_sql = "SELECT c.TABLE_NAME, c.COLUMN_NAME, c.DATA_TYPE, c.IS_NULLABLE, \
             CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END AS is_pk \
@@ -435,7 +364,7 @@ impl Driver for SqlServerDriver {
             ) pk ON c.TABLE_NAME = pk.TABLE_NAME AND c.COLUMN_NAME = pk.COLUMN_NAME \
             ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION";
 
-        let col_rows = client
+        let col_rows = conn
             .simple_query(col_sql)
             .await
             .map_err(|e| DbError::Config(e.to_string()))?
@@ -472,7 +401,7 @@ impl Driver for SqlServerDriver {
             JOIN sys.columns cr ON fkc.referenced_object_id = cr.object_id \
               AND fkc.referenced_column_id = cr.column_id";
 
-        let fk_rows = client
+        let fk_rows = conn
             .simple_query(fk_sql)
             .await
             .map_err(|e| DbError::Config(e.to_string()))?
@@ -498,17 +427,14 @@ impl Driver for SqlServerDriver {
     }
 
     async fn get_table_definition(&self, table_name: &str) -> Result<String, DbError> {
-        let mut guard = self.client.lock().await;
-        let client = guard
-            .as_mut()
-            .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
+        let mut conn = self.pool.get().await.map_err(|e| DbError::Config(e.to_string()))?;
 
         // First check if this is a view
         let view_sql = format!(
             "SELECT OBJECT_DEFINITION(OBJECT_ID('{}', 'V'))",
             table_name.replace('\'', "''")
         );
-        let view_rows = client
+        let view_rows = conn
             .simple_query(&view_sql)
             .await
             .map_err(|e| DbError::Config(e.to_string()))?
@@ -536,7 +462,7 @@ impl Driver for SqlServerDriver {
              ORDER BY c.ORDINAL_POSITION",
             table_name.replace('\'', "''")
         );
-        let col_rows = client
+        let col_rows = conn
             .simple_query(&col_sql)
             .await
             .map_err(|e| DbError::Config(e.to_string()))?
@@ -589,7 +515,7 @@ impl Driver for SqlServerDriver {
              ORDER BY ku.ORDINAL_POSITION",
             table_name.replace('\'', "''")
         );
-        let pk_rows = client
+        let pk_rows = conn
             .simple_query(&pk_sql)
             .await
             .map_err(|e| DbError::Config(e.to_string()))?
@@ -618,14 +544,49 @@ impl Driver for SqlServerDriver {
         }
     }
 
+    async fn import_all_statements(
+        &self,
+        main: Vec<String>,
+        on_error: Vec<String>,
+        mut on_stmt_done: Box<dyn FnMut() + Send>,
+    ) -> Result<usize, DbError> {
+        let mut conn = self.pool.get().await.map_err(|e| DbError::Config(e.to_string()))?;
+        let mut count = 0;
+        for stmt in &main {
+            // Collect the result into an owned error string so the QueryStream
+            // borrow on conn is fully dropped before we issue cleanup queries.
+            let err_msg: Option<String> = match conn.simple_query(stmt.as_str()).await {
+                Ok(stream) => {
+                    // Drain the stream to completion (required by tiberius)
+                    use futures::TryStreamExt;
+                    match stream.try_collect::<Vec<_>>().await {
+                        Ok(_) => None,
+                        Err(e) => Some(e.to_string()),
+                    }
+                }
+                Err(e) => Some(e.to_string()),
+            };
+            if let Some(msg) = err_msg {
+                for s in &on_error {
+                    // Best-effort cleanup; drain the stream so the borrow ends
+                    if let Ok(stream) = conn.simple_query(s.as_str()).await {
+                        use futures::TryStreamExt;
+                        let _ = stream.try_collect::<Vec<_>>().await;
+                    }
+                }
+                return Err(DbError::Config(msg));
+            }
+            count += 1;
+            on_stmt_done();
+        }
+        Ok(count)
+    }
+
     async fn get_server_info(&self) -> Result<ServerInfo, DbError> {
-        let mut guard = self.client.lock().await;
-        let client = guard
-            .as_mut()
-            .ok_or_else(|| DbError::Config("Connection closed".to_string()))?;
+        let mut conn = self.pool.get().await.map_err(|e| DbError::Config(e.to_string()))?;
 
         // Get version - use @@VERSION which returns nvarchar
-        let version = match client
+        let version = match conn
             .simple_query("SELECT CAST(@@VERSION AS NVARCHAR(500))")
             .await
         {
@@ -640,7 +601,7 @@ impl Driver for SqlServerDriver {
         };
 
         // Get current database
-        let database_name = match client.simple_query("SELECT DB_NAME()").await {
+        let database_name = match conn.simple_query("SELECT DB_NAME()").await {
             Ok(result) => match result.into_first_result().await {
                 Ok(rows) => rows
                     .first()
@@ -652,7 +613,7 @@ impl Driver for SqlServerDriver {
         };
 
         // Get connection count - may fail without permissions
-        let connections = match client
+        let connections = match conn
             .simple_query("SELECT COUNT(*) FROM sys.dm_exec_connections")
             .await
         {
@@ -667,7 +628,7 @@ impl Driver for SqlServerDriver {
         };
 
         // Get database size - use VARCHAR to avoid Numeric conversion issues
-        let size = match client.simple_query(
+        let size = match conn.simple_query(
             "SELECT CAST(SUM(size * 8.0 / 1024) AS VARCHAR(20)) FROM sys.master_files WHERE database_id = DB_ID()"
         ).await {
             Ok(result) => match result.into_first_result().await {
@@ -678,7 +639,7 @@ impl Driver for SqlServerDriver {
         };
 
         // Get server name - use SERVERPROPERTY with CAST to avoid sql_variant
-        let host = match client
+        let host = match conn
             .simple_query("SELECT CAST(SERVERPROPERTY('ServerName') AS NVARCHAR(128))")
             .await
         {
@@ -693,7 +654,7 @@ impl Driver for SqlServerDriver {
         };
 
         // Get max connections
-        let max_connections = match client.simple_query("SELECT @@MAX_CONNECTIONS").await {
+        let max_connections = match conn.simple_query("SELECT @@MAX_CONNECTIONS").await {
             Ok(result) => match result.into_first_result().await {
                 Ok(rows) => rows
                     .first()
@@ -721,15 +682,6 @@ impl Driver for SqlServerDriver {
         })
     }
 
-    async fn close(&self) -> Result<(), DbError> {
-        // Take ownership of the client to properly close it
-        let mut guard = self.client.lock().await;
-        if let Some(client) = guard.take() {
-            // Properly close the connection
-            drop(client);
-        }
-        Ok(())
-    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

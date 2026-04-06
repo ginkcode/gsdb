@@ -51,6 +51,8 @@ tauri-plugin-keyring = "0.1.0"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 russh = "0.60"
+bb8 = "0.9"
+bb8-tiberius = { version = "0.16", default-features = false, features = ["with-tokio", "chrono", "tds73"] }
 futures = "0.3"
 tokio-socks = "0.5"
 tauri-plugin-window-state = "2"

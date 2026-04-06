@@ -231,7 +231,7 @@ impl Driver for PostgresDriver {
     }
 
     async fn get_table_definition(&self, table_name: &str) -> Result<String, DbError> {
-        // First check if this is a view
+        // Check if this is a view
         let view_row = sqlx::query(
             "SELECT definition FROM pg_views \
              WHERE schemaname = 'public' AND viewname = $1",
@@ -242,8 +242,6 @@ impl Driver for PostgresDriver {
 
         if let Some(row) = view_row {
             let definition: String = row.try_get(0)?;
-            // pg_views.definition returns the SELECT part without CREATE VIEW
-            // Trim any trailing semicolon from the definition
             let def = definition.trim().trim_end_matches(';');
             return Ok(format!(
                 "-- View Definition\nCREATE OR REPLACE VIEW \"public\".\"{}\" AS\n{};",
@@ -251,8 +249,8 @@ impl Driver for PostgresDriver {
             ));
         }
 
-        // Not a view, treat as table
-        let rows = sqlx::query(
+        // ── Columns ─────────────────────────────────────────────────────────
+        let col_rows = sqlx::query(
             "SELECT column_name, udt_name, is_nullable, column_default, \
              character_maximum_length, numeric_precision, numeric_scale \
              FROM information_schema.columns \
@@ -263,8 +261,8 @@ impl Driver for PostgresDriver {
         .fetch_all(&self.0)
         .await?;
 
-        let mut columns: Vec<String> = Vec::new();
-        for row in rows {
+        let mut defs: Vec<String> = Vec::new();
+        for row in col_rows {
             let col_name: String = row.try_get(0)?;
             let udt_name: String = row.try_get(1)?;
             let is_nullable: String = row.try_get(2)?;
@@ -273,39 +271,61 @@ impl Driver for PostgresDriver {
             let num_precision: Option<i32> = row.try_get(5)?;
             let num_scale: Option<i32> = row.try_get(6)?;
 
-            let full_type = match udt_name.as_str() {
-                "varchar" | "bpchar" => {
-                    if let Some(len) = char_max_len {
-                        format!("{}({})", udt_name, len)
-                    } else {
-                        udt_name.clone()
-                    }
+            // SERIAL: int2/int4/int8 with nextval() default — re-emit as SERIAL
+            // so the sequence is auto-created on import.
+            let is_serial = column_default
+                .as_ref()
+                .map(|d| d.starts_with("nextval("))
+                .unwrap_or(false);
+
+            let full_type = if is_serial {
+                match udt_name.as_str() {
+                    "int2" => "SMALLSERIAL".to_string(),
+                    "int8" => "BIGSERIAL".to_string(),
+                    _ => "SERIAL".to_string(),
                 }
-                "numeric" => match (num_precision, num_scale) {
-                    (Some(prec), Some(scale)) if scale > 0 => {
-                        format!("{}({}, {})", udt_name, prec, scale)
+            } else if udt_name.starts_with('_') {
+                // PostgreSQL array types: _text → text[], _int4 → int4[], etc.
+                format!("{}[]", &udt_name[1..])
+            } else {
+                match udt_name.as_str() {
+                    "varchar" | "bpchar" => {
+                        if let Some(len) = char_max_len {
+                            format!("{}({})", udt_name, len)
+                        } else {
+                            udt_name.clone()
+                        }
                     }
-                    (Some(prec), _) => format!("{}({})", udt_name, prec),
+                    "numeric" => match (num_precision, num_scale) {
+                        (Some(prec), Some(scale)) if scale > 0 => {
+                            format!("{}({}, {})", udt_name, prec, scale)
+                        }
+                        (Some(prec), _) => format!("{}({})", udt_name, prec),
+                        _ => udt_name.clone(),
+                    },
                     _ => udt_name.clone(),
-                },
-                _ => udt_name.clone(),
+                }
             };
 
             let mut col_def = format!("    \"{}\" {}", col_name, full_type);
-            if is_nullable == "NO" {
-                col_def.push_str(" NOT NULL");
+            if !is_serial {
+                if is_nullable == "NO" {
+                    col_def.push_str(" NOT NULL");
+                }
+                if let Some(default) = column_default {
+                    col_def.push_str(&format!(" DEFAULT {}", default));
+                }
             }
-            if let Some(default) = column_default {
-                col_def.push_str(&format!(" DEFAULT {}", default));
-            }
-            columns.push(col_def);
+            defs.push(col_def);
         }
 
+        // ── Primary key ──────────────────────────────────────────────────────
         let pk_rows = sqlx::query(
             "SELECT a.attname \
              FROM pg_index i \
              JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) \
-             WHERE i.indrelid = $1::regclass AND i.indisprimary",
+             WHERE i.indrelid = $1::regclass AND i.indisprimary \
+             ORDER BY a.attnum",
         )
         .bind(format!("\"public\".\"{}\"", table_name))
         .fetch_all(&self.0)
@@ -316,26 +336,140 @@ impl Driver for PostgresDriver {
             .filter_map(|r| r.try_get::<String, _>(0).ok())
             .collect();
 
-        let col_block = columns.join(",\n");
-        if pk_columns.is_empty() {
-            Ok(format!(
-                "-- Table Definition\nCREATE TABLE \"public\".\"{}\" (\n{}\n);",
-                table_name, col_block
-            ))
-        } else {
-            let pk_def = format!(
-                ",\n    PRIMARY KEY ({})",
+        if !pk_columns.is_empty() {
+            defs.push(format!(
+                "    PRIMARY KEY ({})",
                 pk_columns
                     .iter()
                     .map(|c| format!("\"{}\"", c))
                     .collect::<Vec<_>>()
                     .join(", ")
-            );
-            Ok(format!(
-                "-- Table Definition\nCREATE TABLE \"public\".\"{}\" (\n{}{}\n);",
-                table_name, col_block, pk_def
-            ))
+            ));
         }
+
+        // ── UNIQUE + CHECK constraints (via pg_get_constraintdef) ────────────
+        // FK constraints are intentionally excluded here — they are emitted as
+        // separate ALTER TABLE statements in export_database_sql after all tables
+        // are created, so the referenced table is guaranteed to exist.
+        let constraint_rows = sqlx::query(
+            "SELECT pg_get_constraintdef(c.oid) \
+             FROM pg_constraint c \
+             JOIN pg_namespace n ON n.oid = c.connamespace \
+             WHERE c.conrelid = $1::regclass \
+               AND c.contype IN ('u', 'c') \
+               AND n.nspname = 'public' \
+             ORDER BY c.contype, c.conname",
+        )
+        .bind(format!("\"public\".\"{}\"", table_name))
+        .fetch_all(&self.0)
+        .await?;
+
+        for row in constraint_rows {
+            let def: String = row.try_get(0)?;
+            defs.push(format!("    {}", def));
+        }
+
+        Ok(format!(
+            "-- Table Definition\nCREATE TABLE \"public\".\"{}\" (\n{}\n);",
+            table_name,
+            defs.join(",\n")
+        ))
+    }
+
+    async fn get_fk_constraints_sql(&self) -> Result<String, DbError> {
+        let rows = sqlx::query(
+            "SELECT t.relname, c.conname, pg_get_constraintdef(c.oid) \
+             FROM pg_constraint c \
+             JOIN pg_class t ON t.oid = c.conrelid \
+             JOIN pg_namespace n ON n.oid = t.relnamespace \
+             WHERE c.contype = 'f' AND n.nspname = 'public' \
+             ORDER BY t.relname, c.conname",
+        )
+        .fetch_all(&self.0)
+        .await?;
+
+        if rows.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut out = String::from("-- Foreign Key Constraints\n");
+        for row in &rows {
+            let table: String = row.try_get(0)?;
+            let conname: String = row.try_get(1)?;
+            let def: String = row.try_get(2)?;
+            out.push_str(&format!(
+                "ALTER TABLE \"public\".\"{}\" ADD CONSTRAINT \"{}\" {};\n",
+                table, conname, def
+            ));
+        }
+        out.push('\n');
+        Ok(out)
+    }
+
+    async fn import_all_statements(
+        &self,
+        main: Vec<String>,
+        on_error: Vec<String>,
+        mut on_stmt_done: Box<dyn FnMut() + Send>,
+    ) -> Result<usize, DbError> {
+        let mut conn = self.0.acquire().await.map_err(DbError::Sqlx)?;
+        let mut count = 0;
+        for stmt in &main {
+            if let Err(e) = sqlx::query(stmt).execute(&mut *conn).await {
+                for s in &on_error {
+                    let _ = sqlx::query(s).execute(&mut *conn).await;
+                }
+                return Err(DbError::Sqlx(e));
+            }
+            count += 1;
+            on_stmt_done();
+        }
+        Ok(count)
+    }
+
+    async fn get_custom_types_sql(&self) -> Result<String, DbError> {
+        // Query all ENUM types in the public schema, ordered by type name and enum sort order
+        let rows = sqlx::query(
+            "SELECT t.typname, e.enumlabel \
+             FROM pg_type t \
+             JOIN pg_enum e ON t.oid = e.enumtypid \
+             JOIN pg_namespace n ON n.oid = t.typnamespace \
+             WHERE n.nspname = 'public' \
+             ORDER BY t.typname, e.enumsortorder",
+        )
+        .fetch_all(&self.0)
+        .await?;
+
+        if rows.is_empty() {
+            return Ok(String::new());
+        }
+
+        // Group labels by type name (rows are ordered, so a simple accumulator works)
+        let mut types: Vec<(String, Vec<String>)> = Vec::new();
+        for row in &rows {
+            let type_name: String = row.try_get(0)?;
+            let label: String = row.try_get(1)?;
+            if types.last().map(|(n, _)| n.as_str()) == Some(type_name.as_str()) {
+                types.last_mut().unwrap().1.push(label);
+            } else {
+                types.push((type_name, vec![label]));
+            }
+        }
+
+        let mut out = String::from("-- Custom Types\n");
+        for (type_name, labels) in &types {
+            let label_list = labels
+                .iter()
+                .map(|l| format!("'{}'", l.replace('\'', "''")))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!(
+                "DROP TYPE IF EXISTS \"{}\" CASCADE;\nCREATE TYPE \"{}\" AS ENUM ({});\n",
+                type_name, type_name, label_list
+            ));
+        }
+        out.push('\n');
+        Ok(out)
     }
 
     async fn get_server_info(&self) -> Result<ServerInfo, DbError> {

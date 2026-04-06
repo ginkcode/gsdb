@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke, Channel } from "@tauri-apps/api/core";
   import { getVersion } from "@tauri-apps/api/app";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import type { Snippet } from "svelte";
@@ -384,6 +384,12 @@
     }
   }
 
+  // Export progress state
+  let exportProgressOpen = $state(false);
+  let exportProgressCurrent = $state("");
+  let exportProgressIndex = $state(0);
+  let exportProgressTotal = $state(0);
+
   async function exportDatabase(conn: Connection) {
     const downloads = await downloadDir();
     const filePath = await save({
@@ -393,13 +399,37 @@
       filters: [{ name: "SQL Files", extensions: ["sql"] }],
     });
     if (!filePath) return;
+
+    exportProgressOpen = true;
+    exportProgressCurrent = "Starting export...";
+    exportProgressIndex = 0;
+    exportProgressTotal = 0;
+
+    const onEvent = new Channel<import("$lib/types").ExportProgress>();
+    onEvent.onmessage = (progress) => {
+      if (progress.type === "started") {
+        exportProgressTotal = progress.totalTables;
+        exportProgressCurrent = `Exporting ${progress.totalTables} tables...`;
+      } else if (progress.type === "table") {
+        exportProgressIndex = progress.index + 1;
+        exportProgressCurrent = `Exporting table: ${progress.name}`;
+      } else if (progress.type === "done") {
+        exportProgressOpen = false;
+        toast.success("Database exported successfully");
+      } else if (progress.type === "error") {
+        exportProgressOpen = false;
+        toast.error(`Export failed: ${progress.message}`);
+      }
+    };
+
     try {
       await invoke("export_database", {
         connectionId: conn.id,
         filePath,
+        onEvent,
       });
-      toast.success("Database exported successfully");
     } catch (err) {
+      exportProgressOpen = false;
       toast.error(`Export failed: ${err}`);
     }
   }
@@ -413,13 +443,23 @@
       filters: [{ name: "SQL Files", extensions: ["sql"] }],
     });
     if (!filePath) return;
+
+    const onEvent = new Channel<import("$lib/types").ExportProgress>();
+    onEvent.onmessage = (progress) => {
+      if (progress.type === "done") {
+        toast.success(`Table "${tableName}" exported successfully`);
+      } else if (progress.type === "error") {
+        toast.error(`Export failed: ${progress.message}`);
+      }
+    };
+
     try {
       await invoke("export_table", {
         connectionId: connId,
         tableName,
         filePath,
+        onEvent,
       });
-      toast.success(`Table "${tableName}" exported successfully`);
     } catch (err) {
       toast.error(`Export failed: ${err}`);
     }
@@ -472,17 +512,42 @@
     }
   }
 
+  // Import progress state
+  let importProgressOpen = $state(false);
+  let importProgressDone = $state(0);
+  let importProgressTotal = $state(0);
+
   async function confirmImport() {
     importLoading = true;
+    importProgressOpen = true;
+    importProgressDone = 0;
+    importProgressTotal = 0;
+
+    const onEvent = new Channel<import("$lib/types").ImportProgress>();
+    onEvent.onmessage = (progress) => {
+      if (progress.type === "progress") {
+        importProgressDone = progress.done;
+        importProgressTotal = progress.total;
+      } else if (progress.type === "done") {
+        importProgressOpen = false;
+        importDialogOpen = false;
+        toast.success(`${progress.count} statement(s) executed successfully`);
+      } else if (progress.type === "error") {
+        importProgressOpen = false;
+        importDialogOpen = false;
+        toast.error(`Import failed: ${progress.message}`);
+      }
+    };
+
     try {
-      const result: string = await invoke("import_sql", {
+      await invoke("import_sql", {
         connectionId: importConnId,
         filePath: importFilePath,
         disableFkChecks: importDisableFkChecks,
+        onEvent,
       });
-      importDialogOpen = false;
-      toast.success(result);
     } catch (err) {
+      importProgressOpen = false;
       toast.error(`Import failed: ${err}`);
     } finally {
       importLoading = false;
@@ -662,6 +727,58 @@
     open={serverInfoDialogOpen}
     onClose={() => (serverInfoDialogOpen = false)}
   />
+
+  <!-- Export Progress Dialog -->
+  <Dialog.Root bind:open={exportProgressOpen}>
+    <Dialog.Content class="sm:max-w-md">
+      <Dialog.Header>
+        <Dialog.Title>Exporting Database</Dialog.Title>
+        <Dialog.Description>
+          {exportProgressCurrent}
+        </Dialog.Description>
+      </Dialog.Header>
+      <div class="py-4">
+        <div class="w-full bg-muted rounded-full h-2 overflow-hidden">
+          <div
+            class="bg-primary h-full transition-all duration-300"
+            style="width: {exportProgressTotal > 0
+              ? (exportProgressIndex / exportProgressTotal) * 100
+              : 0}%"
+          ></div>
+        </div>
+        {#if exportProgressTotal > 0}
+          <p class="text-xs text-muted-foreground text-center mt-2">
+            {exportProgressIndex} / {exportProgressTotal} tables
+          </p>
+        {/if}
+      </div>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <!-- Import Progress Dialog -->
+  <Dialog.Root bind:open={importProgressOpen}>
+    <Dialog.Content class="sm:max-w-md">
+      <Dialog.Header>
+        <Dialog.Title>Importing SQL</Dialog.Title>
+        <Dialog.Description>Executing SQL statements...</Dialog.Description>
+      </Dialog.Header>
+      <div class="py-4">
+        <div class="w-full bg-muted rounded-full h-2 overflow-hidden">
+          <div
+            class="bg-primary h-full transition-all duration-300"
+            style="width: {importProgressTotal > 0
+              ? (importProgressDone / importProgressTotal) * 100
+              : 0}%"
+          ></div>
+        </div>
+        {#if importProgressTotal > 0}
+          <p class="text-xs text-muted-foreground text-center mt-2">
+            {importProgressDone} / {importProgressTotal} statements
+          </p>
+        {/if}
+      </div>
+    </Dialog.Content>
+  </Dialog.Root>
 
   {#if appVersion}
     <div

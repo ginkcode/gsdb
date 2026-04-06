@@ -235,6 +235,27 @@ impl Driver for SqliteDriver {
         }
     }
 
+    async fn import_all_statements(
+        &self,
+        main: Vec<String>,
+        on_error: Vec<String>,
+        mut on_stmt_done: Box<dyn FnMut() + Send>,
+    ) -> Result<usize, DbError> {
+        let mut conn = self.0.acquire().await.map_err(DbError::Sqlx)?;
+        let mut count = 0;
+        for stmt in &main {
+            if let Err(e) = sqlx::query(stmt).execute(&mut *conn).await {
+                for s in &on_error {
+                    let _ = sqlx::query(s).execute(&mut *conn).await;
+                }
+                return Err(DbError::Sqlx(e));
+            }
+            count += 1;
+            on_stmt_done();
+        }
+        Ok(count)
+    }
+
     async fn get_server_info(&self) -> Result<ServerInfo, DbError> {
         // Get SQLite version
         let version_row = sqlx::query("SELECT sqlite_version()")

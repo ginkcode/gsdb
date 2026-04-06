@@ -139,6 +139,49 @@ pub trait Driver: Send + Sync {
         Ok(())
     }
 
+    /// Returns SQL DDL for custom types (ENUMs, DOMAINs, etc.) that must be emitted
+    /// before CREATE TABLE statements. Default: empty (most drivers have no custom types).
+    async fn get_custom_types_sql(&self) -> Result<String, DbError> {
+        Ok(String::new())
+    }
+
+    /// Returns ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY … statements for all FK
+    /// constraints in the database. Emitted after all CREATE TABLE statements so that
+    /// referenced tables are guaranteed to exist. Default: empty.
+    async fn get_fk_constraints_sql(&self) -> Result<String, DbError> {
+        Ok(String::new())
+    }
+
+    /// Execute all `main` statements on a **single database connection**, calling
+    /// `on_stmt_done` after each one. If any statement fails, runs each `on_error`
+    /// statement on the same connection (ignoring errors) then returns the failure.
+    ///
+    /// This is required for imports: session variables (FK-check disable) and DDL
+    /// visibility within a transaction are connection-scoped, not pool-scoped.
+    ///
+    /// The default delegates to `run_query` (no connection sharing). Each driver that
+    /// uses a pool **must** override this with `pool.acquire()` to hold one connection.
+    async fn import_all_statements(
+        &self,
+        main: Vec<String>,
+        on_error: Vec<String>,
+        on_stmt_done: Box<dyn FnMut() + Send>,
+    ) -> Result<usize, DbError> {
+        let mut on_stmt_done = on_stmt_done;
+        let mut count = 0;
+        for stmt in &main {
+            if let Err(e) = self.run_query(stmt).await {
+                for s in &on_error {
+                    let _ = self.run_query(s).await;
+                }
+                return Err(e);
+            }
+            count += 1;
+            on_stmt_done();
+        }
+        Ok(count)
+    }
+
     /// Close the connection and release resources.
     /// For connection pools (Postgres, MySQL, SQLite), this is a no-op.
     /// For SQL Server (single connection), this properly closes the TCP connection.
@@ -146,6 +189,30 @@ pub trait Driver: Send + Sync {
         // Default: no-op for connection pools that handle their own cleanup
         Ok(())
     }
+}
+
+// ── Export / Import progress events ──────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[allow(dead_code)]
+pub enum ExportProgress {
+    #[serde(rename_all = "camelCase")]
+    Started { total_tables: usize },
+    #[serde(rename_all = "camelCase")]
+    Table { name: String, index: usize, total: usize },
+    Done,
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ImportProgress {
+    #[serde(rename_all = "camelCase")]
+    Progress { done: usize, total: usize },
+    #[serde(rename_all = "camelCase")]
+    Done { count: usize },
+    Error { message: String },
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

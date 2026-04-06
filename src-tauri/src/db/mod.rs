@@ -8,7 +8,7 @@ mod sqlite;
 mod sqlserver;
 mod ssh;
 
-pub use driver::{DbError, Dialect, Driver, ServerInfo, StreamUpdate};
+pub use driver::{DbError, Dialect, Driver, ExportProgress, ImportProgress, ServerInfo, StreamUpdate};
 pub use ssh::SshTunnel;
 pub use types::{Connection, QueryResult, SchemaGraph, TableInfo};
 
@@ -184,6 +184,23 @@ impl DbPool {
 
     pub async fn get_schema(&self) -> Result<SchemaGraph, DbError> {
         self.driver.get_schema().await
+    }
+
+    pub async fn get_custom_types_sql(&self) -> Result<String, DbError> {
+        self.driver.get_custom_types_sql().await
+    }
+
+    pub async fn get_fk_constraints_sql(&self) -> Result<String, DbError> {
+        self.driver.get_fk_constraints_sql().await
+    }
+
+    pub async fn import_all_statements(
+        &self,
+        main: Vec<String>,
+        on_error: Vec<String>,
+        on_stmt_done: Box<dyn FnMut() + Send>,
+    ) -> Result<usize, DbError> {
+        self.driver.import_all_statements(main, on_error, on_stmt_done).await
     }
 
     pub async fn get_server_info(&self) -> Result<ServerInfo, DbError> {

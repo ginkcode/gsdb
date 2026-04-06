@@ -64,6 +64,7 @@
     <ResizablePrimitive.PaneGroup direction="vertical" class="flex-1">
       <ResizablePrimitive.Pane defaultSize={40} minSize={20}>
         <div class="h-full flex flex-col bg-muted">
+          {#key tab.id}
           <SqlEditor
             bind:value={tab.sql}
             bind:runRef={editorRun}
@@ -77,6 +78,7 @@
                   : "sql"}
             onRun={(sql) => runQuery(tab.id, sql)}
           />
+          {/key}
           <div
             class="flex items-center gap-2 px-3 py-1.5 border-t border-border/60 bg-background/40 shrink-0"
           >
