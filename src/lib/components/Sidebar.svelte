@@ -33,6 +33,7 @@
   import DiagramPickerDialog from "./DiagramPickerDialog.svelte";
   import QueryHistoryDialog from "./QueryHistoryDialog.svelte";
   import ServerInfoDialog from "./ServerInfoDialog.svelte";
+  import ExportDatabaseDialog from "./ExportDatabaseDialog.svelte";
 
   let {
     onEditConnection,
@@ -384,6 +385,10 @@
     }
   }
 
+  // Export database dialog state
+  let exportDialogOpen = $state(false);
+  let exportDialogConnection = $state<Connection | null>(null);
+
   // Export progress state
   let exportProgressOpen = $state(false);
   let exportProgressCurrent = $state("");
@@ -391,10 +396,27 @@
   let exportProgressTotal = $state(0);
 
   function utcTimestamp(): string {
-    return new Date().toISOString().replace(/[-:]/g, "").replace("T", "_").slice(0, 15) + "Z";
+    return (
+      new Date()
+        .toISOString()
+        .replace(/[-:]/g, "")
+        .replace("T", "_")
+        .slice(0, 15) + "Z"
+    );
   }
 
-  async function exportDatabase(conn: Connection) {
+  function openExportDialog(conn: Connection) {
+    exportDialogConnection = conn;
+    exportDialogOpen = true;
+  }
+
+  async function handleExportConfirm(
+    tables: import("$lib/types").TableExportOptions[],
+  ) {
+    if (!exportDialogConnection) return;
+    const conn = exportDialogConnection;
+    exportDialogOpen = false;
+
     const downloads = await downloadDir();
     const ts = utcTimestamp();
     const filePath = await save({
@@ -428,8 +450,9 @@
     };
 
     try {
-      await invoke("export_database", {
+      await invoke("export_tables", {
         connectionId: conn.id,
+        tables,
         filePath,
         onEvent,
       });
@@ -635,7 +658,7 @@
         onToggleLock={() => handleToggleLock(conn)}
         onShowHistory={() => openQueryHistory(conn)}
         onServerInfo={() => openServerInfo(conn)}
-        onExport={() => exportDatabase(conn)}
+        onExport={() => openExportDialog(conn)}
         onImport={() => importSql(conn.id)}
         onChangeDatabase={() => openChangeDatabase(conn)}
         onViewDiagram={() => openDiagram(conn)}
@@ -672,6 +695,15 @@
     connectionId={diagramPickerConnId}
     initialSelected={diagramPickerInitialTables}
     onConfirm={(tables) => openDiagramTab(diagramPickerConnId, tables)}
+  />
+
+  <!-- Export Database Dialog -->
+  <ExportDatabaseDialog
+    open={exportDialogOpen}
+    connectionId={exportDialogConnection?.id ?? ""}
+    connectionName={exportDialogConnection?.name ?? ""}
+    onConfirm={handleExportConfirm}
+    onCancel={() => (exportDialogOpen = false)}
   />
 
   <!-- Change Database Dialog -->
@@ -780,7 +812,12 @@
 
   <!-- Import Progress Dialog -->
   <Dialog.Root bind:open={importProgressOpen}>
-    <Dialog.Content class="sm:max-w-md" showCloseButton={false} interactOutsideBehavior="ignore" escapeKeydownBehavior="ignore">
+    <Dialog.Content
+      class="sm:max-w-md"
+      showCloseButton={false}
+      interactOutsideBehavior="ignore"
+      escapeKeydownBehavior="ignore"
+    >
       <Dialog.Header>
         <Dialog.Title>Importing SQL</Dialog.Title>
         <Dialog.Description>
@@ -808,10 +845,16 @@
       </div>
       <Dialog.Footer>
         {#if importCancelConfirm}
-          <Button variant="outline" onclick={() => (importCancelConfirm = false)}>Keep importing</Button>
-          <Button variant="destructive" onclick={confirmCancelImport}>Yes, cancel</Button>
+          <Button
+            variant="outline"
+            onclick={() => (importCancelConfirm = false)}>Keep importing</Button
+          >
+          <Button variant="destructive" onclick={confirmCancelImport}
+            >Yes, cancel</Button
+          >
         {:else}
-          <Button variant="outline" onclick={requestCancelImport}>Cancel</Button>
+          <Button variant="outline" onclick={requestCancelImport}>Cancel</Button
+          >
         {/if}
       </Dialog.Footer>
     </Dialog.Content>

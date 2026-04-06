@@ -92,6 +92,12 @@ export interface ServerInfo {
   extra: [string, string][];
 }
 
+export interface TableExportOptions {
+  name: string;
+  includeStructure: boolean;
+  includeData: boolean;
+}
+
 export type ExportProgress =
   | { type: "started"; totalTables: number }
   | { type: "table"; name: string; index: number; total: number }

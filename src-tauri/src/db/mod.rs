@@ -8,7 +8,7 @@ mod sqlite;
 mod sqlserver;
 mod ssh;
 
-pub use driver::{DbError, Dialect, Driver, ExportProgress, ImportProgress, ServerInfo, StreamUpdate};
+pub use driver::{DbError, Dialect, Driver, ExportProgress, ImportProgress, ServerInfo, StreamUpdate, TableExportOptions};
 pub use ssh::SshTunnel;
 pub use types::{Connection, QueryResult, SchemaGraph, TableInfo};
 
@@ -176,6 +176,16 @@ impl DbPool {
             return Err(DbError::Config("Invalid database name".into()));
         }
         self.driver.create_database(db_name).await
+    }
+
+    pub async fn drop_database(&self, db_name: &str) -> Result<(), DbError> {
+        if !db_name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err(DbError::Config("Invalid database name".into()));
+        }
+        self.driver.drop_database(db_name).await
     }
 
     pub async fn get_table_definition(&self, table_name: &str) -> Result<String, DbError> {

@@ -108,6 +108,8 @@ pub trait Driver: Send + Sync {
 
     async fn create_database(&self, db_name: &str) -> Result<(), DbError>;
 
+    async fn drop_database(&self, db_name: &str) -> Result<(), DbError>;
+
     async fn get_table_definition(&self, table_name: &str) -> Result<String, DbError>;
 
     async fn get_schema(&self) -> Result<SchemaGraph, DbError>;
@@ -207,6 +209,16 @@ pub trait Driver: Send + Sync {
         // Default: no-op for connection pools that handle their own cleanup
         Ok(())
     }
+}
+
+// ── Export options ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TableExportOptions {
+    pub name: String,
+    pub include_structure: bool,
+    pub include_data: bool,
 }
 
 // ── Export / Import progress events ──────────────────────────────────────────

@@ -141,6 +141,10 @@ impl Driver for SqliteDriver {
         Ok(())
     }
 
+    async fn drop_database(&self, _db_name: &str) -> Result<(), DbError> {
+        Err(DbError::Config("Drop database is not supported for SQLite".into()))
+    }
+
     async fn get_schema(&self) -> Result<SchemaGraph, DbError> {
         // Get all tables (not views)
         let table_rows =

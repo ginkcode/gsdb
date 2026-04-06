@@ -2,10 +2,10 @@ mod commands;
 mod db;
 
 use commands::{
-    add_connection, cancel_import, cancel_query, create_database, export_database, export_table,
-    get_column_nullable, get_schema, get_server_info, get_system_theme, get_table_definition,
-    import_sql, list_databases, list_tables, read_file_preview, reconnect_connection, run_query,
-    run_query_stream, AppState,
+    add_connection, cancel_import, cancel_query, create_database, drop_database, export_database,
+    export_table, export_tables, get_column_nullable, get_schema, get_server_info, get_system_theme,
+    get_table_definition, import_sql, list_databases, list_tables, read_file_preview,
+    reconnect_connection, run_query, run_query_stream, AppState,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -47,9 +47,11 @@ pub fn run() {
             get_system_theme,
             export_table,
             export_database,
+            export_tables,
             import_sql,
             list_databases,
             create_database,
+            drop_database,
             read_file_preview,
             get_column_nullable,
             get_schema,

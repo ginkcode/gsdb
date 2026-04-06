@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use serde_json::Value;
 
-use super::{DbError, DbPool, Dialect, ExportProgress};
+use super::{DbError, DbPool, Dialect, ExportProgress, TableExportOptions};
 
 /// Topological sort of `tables` by FK dependencies (Kahn's BFS algorithm).
 /// Returns tables ordered so that every FK target appears before the table
@@ -304,6 +304,95 @@ impl DbPool {
 
         out.push_str(&self.table_ddl(table_name).await?);
         out.push_str(&self.table_inserts(table_name).await?);
+        out.push_str("COMMIT;\n");
+        Ok(out)
+    }
+
+    /// Export selected tables with per-table structure/data options.
+    /// Tables are ordered by FK dependencies (topological sort).
+    /// Each entry in `tables` specifies which of structure and data to include.
+    pub async fn export_tables_sql<F>(
+        &self,
+        tables: &[TableExportOptions],
+        mut on_progress: F,
+    ) -> Result<String, DbError>
+    where
+        F: FnMut(ExportProgress),
+    {
+        if tables.is_empty() {
+            return Err(DbError::Config("No tables selected for export".into()));
+        }
+
+        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+
+        // Get FK edges for topological sort using all selected table names
+        let all_names: Vec<String> = tables.iter().map(|t| t.name.clone()).collect();
+        let schema = self.get_schema().await?;
+        let fk_edges: Vec<(String, String)> = schema.foreign_keys
+            .iter()
+            .map(|fk| (fk.from_table.clone(), fk.to_table.clone()))
+            .collect();
+
+        // Sort all selected tables by FK dependencies, then remap back to options
+        let sorted_names = topological_sort(&all_names, &fk_edges);
+        let opts_map: std::collections::HashMap<&str, &TableExportOptions> =
+            tables.iter().map(|t| (t.name.as_str(), t)).collect();
+        let sorted_tables: Vec<&TableExportOptions> = sorted_names
+            .iter()
+            .filter_map(|n| opts_map.get(n.as_str()).copied())
+            .collect();
+
+        on_progress(ExportProgress::Started { total_tables: sorted_tables.len() });
+
+        let mut out = format!(
+            "-- GSDB SQL Export\n-- Driver: {}\n-- Generated: {}\n\n",
+            self.driver_name(), timestamp
+        );
+
+        let any_structure = sorted_tables.iter().any(|t| t.include_structure);
+        let any_data = sorted_tables.iter().any(|t| t.include_data);
+
+        // Custom types (for PostgreSQL) — emit if any table includes structure
+        if any_structure {
+            let types_sql = self.get_custom_types_sql().await?;
+            if !types_sql.is_empty() {
+                out.push_str(&types_sql);
+            }
+        }
+
+        out.push_str("BEGIN;\n\n");
+
+        // Section 1: All DDL first (per-table structure flag)
+        if any_structure {
+            out.push_str("-- Schema\n");
+            for opts in &sorted_tables {
+                if opts.include_structure {
+                    out.push_str(&self.table_ddl(&opts.name).await?);
+                }
+            }
+
+            // FK constraints after all CREATE TABLEs
+            let fk_sql = self.get_fk_constraints_sql().await?;
+            if !fk_sql.is_empty() {
+                out.push_str(&fk_sql);
+            }
+        }
+
+        // Section 2: All data after all DDL (per-table data flag)
+        if any_data {
+            out.push_str("-- Data\n");
+            for (i, opts) in sorted_tables.iter().enumerate() {
+                if opts.include_data {
+                    on_progress(ExportProgress::Table {
+                        name: opts.name.clone(),
+                        index: i,
+                        total: sorted_tables.len(),
+                    });
+                    out.push_str(&self.table_inserts(&opts.name).await?);
+                }
+            }
+        }
+
         out.push_str("COMMIT;\n");
         Ok(out)
     }

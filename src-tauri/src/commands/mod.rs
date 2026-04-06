@@ -3,7 +3,7 @@ use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use tauri::State;
 use tokio::sync::{oneshot, Mutex};
 
-use crate::db::{Connection, DbPool, ExportProgress, ImportProgress, QueryResult, SchemaGraph, StreamUpdate, TableInfo};
+use crate::db::{Connection, DbPool, ExportProgress, ImportProgress, QueryResult, SchemaGraph, StreamUpdate, TableExportOptions, TableInfo};
 
 // ── Reconnect helpers ─────────────────────────────────────────────────────────
 
@@ -345,6 +345,25 @@ pub async fn create_database(
 }
 
 #[tauri::command]
+pub async fn drop_database(
+    connection_id: String,
+    db_name: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let pool = {
+        let pools = state.pools.lock().await;
+        pools
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+            .clone()
+    };
+
+    pool.drop_database(&db_name)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn get_system_theme() -> String {
     match dark_light::detect() {
         Ok(dark_light::Mode::Dark) => "dark".to_string(),
@@ -394,6 +413,32 @@ pub async fn export_database(
     };
     let sql = pool
         .export_database_sql(|progress| {
+            on_event.send(progress).ok();
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    std::fs::write(&file_path, sql).map_err(|e| e.to_string())?;
+    on_event.send(ExportProgress::Done).ok();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn export_tables(
+    connection_id: String,
+    tables: Vec<TableExportOptions>,
+    file_path: String,
+    on_event: tauri::ipc::Channel<ExportProgress>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let pool = {
+        let pools = state.pools.lock().await;
+        pools
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+            .clone()
+    };
+    let sql = pool
+        .export_tables_sql(&tables, |progress| {
             on_event.send(progress).ok();
         })
         .await

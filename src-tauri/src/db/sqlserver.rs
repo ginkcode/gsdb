@@ -349,6 +349,12 @@ impl Driver for SqlServerDriver {
         Ok(())
     }
 
+    async fn drop_database(&self, db_name: &str) -> Result<(), DbError> {
+        let sql = format!("DROP DATABASE [{}]", db_name.replace(']', "]]"));
+        self.run_query(&sql).await?;
+        Ok(())
+    }
+
     async fn get_schema(&self) -> Result<SchemaGraph, DbError> {
         let mut conn = self.pool.get().await.map_err(|e| DbError::Config(e.to_string()))?;
 

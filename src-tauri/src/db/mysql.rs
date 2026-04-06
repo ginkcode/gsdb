@@ -177,6 +177,12 @@ impl Driver for MySqlDriver {
         Ok(())
     }
 
+    async fn drop_database(&self, db_name: &str) -> Result<(), DbError> {
+        self.run_query(&format!("DROP DATABASE `{}`", db_name))
+            .await?;
+        Ok(())
+    }
+
     async fn get_schema(&self) -> Result<SchemaGraph, DbError> {
         fn get_str(row: &sqlx::mysql::MySqlRow, idx: usize) -> String {
             row.try_get::<String, _>(idx).unwrap_or_else(|_| {

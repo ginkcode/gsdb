@@ -157,6 +157,12 @@ impl Driver for PostgresDriver {
         Ok(())
     }
 
+    async fn drop_database(&self, db_name: &str) -> Result<(), DbError> {
+        self.run_query(&format!("DROP DATABASE \"{}\"", db_name))
+            .await?;
+        Ok(())
+    }
+
     async fn get_schema(&self) -> Result<SchemaGraph, DbError> {
         // All columns with PK flag in one query
         let col_rows = sqlx::query(
