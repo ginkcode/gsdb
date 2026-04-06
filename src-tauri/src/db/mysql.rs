@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::{Column, Row, TypeInfo};
 
-use super::driver::{DbError, Dialect, Driver, ServerInfo, StreamUpdate};
+use super::driver::{stmt_error, DbError, Dialect, Driver, ServerInfo, StreamUpdate};
 use super::types::{
     QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo,
 };
@@ -307,12 +307,12 @@ impl Driver for MySqlDriver {
     ) -> Result<usize, DbError> {
         let mut conn = self.0.acquire().await.map_err(DbError::Sqlx)?;
         let mut count = 0;
-        for stmt in &main {
+        for (idx, stmt) in main.iter().enumerate() {
             if let Err(e) = sqlx::query(stmt).execute(&mut *conn).await {
                 for s in &on_error {
                     let _ = sqlx::query(s).execute(&mut *conn).await;
                 }
-                return Err(DbError::Sqlx(e));
+                return Err(stmt_error(DbError::Sqlx(e), idx + 1, stmt));
             }
             count += 1;
             if !on_stmt_done() {

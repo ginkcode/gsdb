@@ -182,12 +182,12 @@ pub trait Driver: Send + Sync {
     ) -> Result<usize, DbError> {
         let mut on_stmt_done = on_stmt_done;
         let mut count = 0;
-        for stmt in &main {
+        for (idx, stmt) in main.iter().enumerate() {
             if let Err(e) = self.run_query(stmt).await {
                 for s in &on_error {
                     let _ = self.run_query(s).await;
                 }
-                return Err(e);
+                return Err(stmt_error(e, idx + 1, stmt));
             }
             count += 1;
             if !on_stmt_done() {
@@ -232,6 +232,20 @@ pub enum ImportProgress {
     Done { count: usize },
     Error { message: String },
     Cancelled,
+}
+
+/// Wraps a DbError with statement position and a SQL snippet for user-facing error messages.
+pub fn stmt_error(e: DbError, stmt_num: usize, stmt: &str) -> DbError {
+    const SNIPPET_LEN: usize = 120;
+    let snippet = if stmt.len() > SNIPPET_LEN {
+        format!("{}…", &stmt[..SNIPPET_LEN])
+    } else {
+        stmt.to_string()
+    };
+    DbError::Config(format!(
+        "{}\n\nFailed at statement {}:\n{}",
+        e, stmt_num, snippet
+    ))
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

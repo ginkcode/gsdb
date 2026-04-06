@@ -5,7 +5,7 @@ use serde_json::Value;
 use tiberius::xml::XmlData;
 use tiberius::{AuthMethod, ColumnType, Config, EncryptionLevel, Row};
 
-use super::driver::{DbError, Dialect, Driver, ServerInfo, StreamUpdate};
+use super::driver::{stmt_error, DbError, Dialect, Driver, ServerInfo, StreamUpdate};
 use super::types::{
     QueryResult, SchemaColumn, SchemaForeignKey, SchemaGraph, SchemaTable, TableInfo,
 };
@@ -552,7 +552,7 @@ impl Driver for SqlServerDriver {
     ) -> Result<usize, DbError> {
         let mut conn = self.pool.get().await.map_err(|e| DbError::Config(e.to_string()))?;
         let mut count = 0;
-        for stmt in &main {
+        for (idx, stmt) in main.iter().enumerate() {
             // Collect the result into an owned error string so the QueryStream
             // borrow on conn is fully dropped before we issue cleanup queries.
             let err_msg: Option<String> = match conn.simple_query(stmt.as_str()).await {
@@ -572,7 +572,7 @@ impl Driver for SqlServerDriver {
                         let _ = stream.try_collect::<Vec<_>>().await;
                     }
                 }
-                return Err(DbError::Config(msg));
+                return Err(stmt_error(DbError::Config(msg), idx + 1, stmt));
             }
             count += 1;
             if !on_stmt_done() {

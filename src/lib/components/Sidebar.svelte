@@ -569,9 +569,9 @@
         disableFkChecks: importDisableFkChecks,
         onEvent,
       });
-    } catch (err) {
+    } catch {
+      // Error already reported via the Channel onmessage handler above
       importProgressOpen = false;
-      toast.error(`Import failed: ${err}`);
     } finally {
       importLoading = false;
     }

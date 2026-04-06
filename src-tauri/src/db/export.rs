@@ -1,7 +1,72 @@
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use serde_json::Value;
 
 use super::{DbError, DbPool, Dialect, ExportProgress};
+
+/// Topological sort of `tables` by FK dependencies (Kahn's BFS algorithm).
+/// Returns tables ordered so that every FK target appears before the table
+/// that references it. Tables in a cycle (or with self-references) are
+/// appended at the end in their original order.
+fn topological_sort(tables: &[String], fk_edges: &[(String, String)]) -> Vec<String> {
+    // Build adjacency: dep_of[A] = set of tables that A must come before (A → B means B depends on A)
+    // in_degree[B] = number of tables B depends on
+    let table_set: HashSet<&str> = tables.iter().map(|s| s.as_str()).collect();
+
+    let mut in_degree: HashMap<&str, usize> = tables.iter().map(|t| (t.as_str(), 0)).collect();
+    // edges: prerequisite → dependent  (prerequisite must come first)
+    let mut edges: HashMap<&str, Vec<&str>> = HashMap::new();
+
+    for (from_table, to_table) in fk_edges {
+        // `from_table` has a FK pointing to `to_table`, so `to_table` must be exported first.
+        // Skip self-references and tables not in the export set.
+        if from_table == to_table
+            || !table_set.contains(from_table.as_str())
+            || !table_set.contains(to_table.as_str())
+        {
+            continue;
+        }
+        // to_table → from_table: to_table is a prerequisite of from_table
+        edges.entry(to_table.as_str()).or_default().push(from_table.as_str());
+        *in_degree.entry(from_table.as_str()).or_insert(0) += 1;
+    }
+
+    let mut queue: VecDeque<&str> = in_degree
+        .iter()
+        .filter(|(_, &d)| d == 0)
+        .map(|(&t, _)| t)
+        .collect();
+    // Sort queue for deterministic output
+    let mut queue_vec: Vec<&str> = queue.drain(..).collect();
+    queue_vec.sort_unstable();
+    queue.extend(queue_vec);
+
+    let mut sorted: Vec<String> = Vec::with_capacity(tables.len());
+    while let Some(t) = queue.pop_front() {
+        sorted.push(t.to_string());
+        if let Some(dependents) = edges.get(t) {
+            let mut deps: Vec<&str> = dependents.clone();
+            deps.sort_unstable();
+            for dep in deps {
+                let d = in_degree.entry(dep).or_insert(0);
+                *d -= 1;
+                if *d == 0 {
+                    queue.push_back(dep);
+                }
+            }
+        }
+    }
+
+    // Append any tables not reached (cycles) in original order
+    let sorted_set: HashSet<String> = sorted.iter().cloned().collect();
+    for t in tables {
+        if !sorted_set.contains(t.as_str()) {
+            sorted.push(t.clone());
+        }
+    }
+
+    sorted
+}
 
 fn quote_ident(name: &str, backtick: bool) -> String {
     if backtick {
@@ -162,15 +227,13 @@ impl DbPool {
         }
     }
 
-    /// DDL + INSERTs for one table, no transaction wrapper.
-    /// Used as a building block by both single-table and database exports.
-    async fn table_sql_body(&self, table_name: &str) -> Result<String, DbError> {
+    /// DROP + CREATE DDL for one table, no data.
+    async fn table_ddl(&self, table_name: &str) -> Result<String, DbError> {
         let is_mysql = self.dialect() == Dialect::Mysql;
-        let q = quote_ident(table_name, is_mysql);
         let fq = if self.dialect() == Dialect::Postgres {
             format!("\"public\".\"{}\"", table_name)
         } else {
-            q.clone()
+            quote_ident(table_name, is_mysql)
         };
 
         let ddl_raw = self.get_table_definition(table_name).await?;
@@ -183,39 +246,49 @@ impl DbPool {
             _ => format!("DROP TABLE IF EXISTS {};\n", fq),
         };
 
-        let mut out = String::new();
-        out.push_str(&drop);
-        out.push_str(ddl);
-        out.push_str("\n\n");
+        Ok(format!("{}{}\n\n", drop, ddl))
+    }
+
+    /// INSERT statements for all rows in one table, no DDL.
+    async fn table_inserts(&self, table_name: &str) -> Result<String, DbError> {
+        let is_mysql = self.dialect() == Dialect::Mysql;
+        let q = quote_ident(table_name, is_mysql);
+        let fq = if self.dialect() == Dialect::Postgres {
+            format!("\"public\".\"{}\"", table_name)
+        } else {
+            q.clone()
+        };
 
         let result = self.run_query(&format!("SELECT * FROM {}", fq)).await?;
-        if !result.rows.is_empty() {
-            let col_list = result
-                .columns
-                .iter()
-                .map(|c| quote_ident(c, is_mysql))
-                .collect::<Vec<_>>()
-                .join(", ");
-            for row in &result.rows {
-                let vals = result
-                    .columns
-                    .iter()
-                    .map(|c| value_to_sql(row.get(c).unwrap_or(&Value::Null), self.dialect()))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                out.push_str(&format!(
-                    "INSERT INTO {} ({}) VALUES ({});\n",
-                    q, col_list, vals
-                ));
-            }
-            out.push('\n');
+        if result.rows.is_empty() {
+            return Ok(String::new());
         }
 
+        let col_list = result
+            .columns
+            .iter()
+            .map(|c| quote_ident(c, is_mysql))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let mut out = format!("-- Data: {}\n", table_name);
+        for row in &result.rows {
+            let vals = result
+                .columns
+                .iter()
+                .map(|c| value_to_sql(row.get(c).unwrap_or(&Value::Null), self.dialect()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!(
+                "INSERT INTO {} ({}) VALUES ({});\n",
+                q, col_list, vals
+            ));
+        }
+        out.push('\n');
         Ok(out)
     }
 
-    /// Standalone single-table export.
-    /// One BEGIN/COMMIT wrapping custom types + DDL + INSERTs.
+    /// Standalone single-table export: DDL then data, wrapped in one transaction.
     pub async fn export_table_sql(&self, table_name: &str) -> Result<String, DbError> {
         let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
         let mut out = format!(
@@ -223,12 +296,14 @@ impl DbPool {
             self.driver_name(), table_name, timestamp
         );
 
+        // Custom types used by this table (safe idempotent variant)
         let types_sql = self.get_table_custom_types_sql(table_name).await?;
         if !types_sql.is_empty() {
             out.push_str(&types_sql);
         }
 
-        out.push_str(&self.table_sql_body(table_name).await?);
+        out.push_str(&self.table_ddl(table_name).await?);
+        out.push_str(&self.table_inserts(table_name).await?);
         out.push_str("COMMIT;\n");
         Ok(out)
     }
@@ -239,44 +314,58 @@ impl DbPool {
     {
         let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
 
-        // Collect tables (exclude views from INSERT export)
         let all_items = self.list_tables().await?;
-        let tables: Vec<_> = all_items.iter().filter(|t| t.kind == "table").collect();
+        let table_names: Vec<String> = all_items.iter().filter(|t| t.kind == "table").map(|t| t.name.clone()).collect();
         let views: Vec<_> = all_items.iter().filter(|t| t.kind == "view").collect();
 
-        on_progress(ExportProgress::Started { total_tables: tables.len() });
+        // Topological sort — best effort; cycles are appended at end.
+        let schema = self.get_schema().await?;
+        let fk_edges: Vec<(String, String)> = schema.foreign_keys
+            .iter()
+            .map(|fk| (fk.from_table.clone(), fk.to_table.clone()))
+            .collect();
+        let sorted_table_names = topological_sort(&table_names, &fk_edges);
+
+        on_progress(ExportProgress::Started { total_tables: sorted_table_names.len() });
 
         let mut out = format!(
             "-- GSDB SQL Export\n-- Driver: {}\n-- Generated: {}\n\nBEGIN;\n\n",
             self.driver_name(), timestamp
         );
 
-        // Emit custom types (ENUMs, DOMAINs) before any table DDL
+        // ── Section 1: Custom types ──────────────────────────────────────────
         let types_sql = self.get_custom_types_sql().await?;
         if !types_sql.is_empty() {
             out.push_str(&types_sql);
         }
 
-        for (i, table) in tables.iter().enumerate() {
-            on_progress(ExportProgress::Table {
-                name: table.name.clone(),
-                index: i,
-                total: tables.len(),
-            });
-            out.push_str(&format!("-- Table: {}\n", table.name));
-            // Use table_sql_body (no BEGIN/COMMIT) — the database export has its own
-            // single transaction wrapping everything. Calling export_table_sql here
-            // would create nested transactions which no database supports.
-            out.push_str(&self.table_sql_body(&table.name).await?);
+        // ── Section 2: All DDL (DROP + CREATE TABLE) ─────────────────────────
+        // All tables are created before any data is inserted, so circular FK
+        // references between tables never cause "no such table" errors.
+        out.push_str("-- Schema\n");
+        for table_name in &sorted_table_names {
+            out.push_str(&self.table_ddl(table_name).await?);
         }
 
-        // FK constraints: emitted after all tables so referenced tables exist
+        // FK constraints after all CREATE TABLEs (for drivers that defer them)
         let fk_sql = self.get_fk_constraints_sql().await?;
         if !fk_sql.is_empty() {
             out.push_str(&fk_sql);
         }
 
-        // Views at the end (they may reference tables)
+        // ── Section 3: All data (INSERT) ─────────────────────────────────────
+        // All tables exist now, so inserts succeed regardless of FK order.
+        out.push_str("-- Data\n");
+        for (i, table_name) in sorted_table_names.iter().enumerate() {
+            on_progress(ExportProgress::Table {
+                name: table_name.clone(),
+                index: i,
+                total: sorted_table_names.len(),
+            });
+            out.push_str(&self.table_inserts(table_name).await?);
+        }
+
+        // ── Section 4: Views ─────────────────────────────────────────────────
         for view in &views {
             let ddl_raw = self.get_table_definition(&view.name).await?;
             let ddl = ddl_raw
