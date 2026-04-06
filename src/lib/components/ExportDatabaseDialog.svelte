@@ -314,8 +314,8 @@
                       aria-label="Select {table.name}"
                     />
                   </td>
-                  <td class="px-3 py-2">
-                    <span class="font-mono text-xs">{table.name}</span>
+                  <td class="px-3 py-2 max-w-0 w-full">
+                    <span class="font-mono text-xs block truncate" title={table.name}>{table.name}</span>
                   </td>
                   <td class="px-3 py-2 text-center">
                     <Checkbox
