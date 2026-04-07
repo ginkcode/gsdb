@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use sqlx::{Column, Row, TypeInfo};
+use sqlx::{Column, Connection, Row, TypeInfo};
 
 use super::driver::{stmt_error, DbError, Dialect, Driver, ServerInfo, StreamUpdate};
 use super::types::{
@@ -249,6 +249,28 @@ impl Driver for MySqlDriver {
     }
 
     async fn get_table_definition(&self, table_name: &str) -> Result<String, DbError> {
+        // Reject tables that belong to MySQL system schemas — they use reserved
+        // tablespaces and internal mechanisms that cannot be recreated.
+        let sys_check = sqlx::query(
+            "SELECT TABLE_SCHEMA FROM information_schema.TABLES \
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+        )
+        .bind(table_name)
+        .fetch_optional(&self.0)
+        .await?;
+        if let Some(row) = sys_check {
+            let schema: String = row.try_get::<String, _>(0)
+                .or_else(|_| row.try_get::<Vec<u8>, _>(0).map(|b| String::from_utf8_lossy(&b).into_owned()))
+                .unwrap_or_default()
+                .to_lowercase();
+            if matches!(schema.as_str(), "mysql" | "information_schema" | "performance_schema" | "sys") {
+                return Err(DbError::Config(format!(
+                    "Cannot export '{}': it belongs to the '{}' system schema which contains reserved tables that cannot be recreated.",
+                    table_name, schema
+                )));
+            }
+        }
+
         // First check if this is a view
         let view_row = sqlx::query(
             "SELECT TABLE_TYPE FROM information_schema.TABLES \
@@ -311,23 +333,112 @@ impl Driver for MySqlDriver {
         on_error: Vec<String>,
         mut on_stmt_done: Box<dyn FnMut() -> bool + Send>,
     ) -> Result<usize, DbError> {
+        // MySQL rejects BEGIN/COMMIT/ROLLBACK via the prepared-statement protocol.
+        // Split the statement list into three phases so the native Transaction
+        // type is consumed (borrow released) before we use conn again.
+        fn is_begin(s: &str) -> bool {
+            let u = s.trim().to_uppercase();
+            u == "BEGIN" || u.starts_with("BEGIN ")
+        }
+        fn is_end(s: &str) -> bool {
+            let u = s.trim().to_uppercase();
+            u == "COMMIT" || u == "ROLLBACK"
+                || u.starts_with("COMMIT ") || u.starts_with("ROLLBACK ")
+        }
+
+        let begin_idx = main.iter().position(|s| is_begin(s));
+        let end_idx   = main.iter().rposition(|s| is_end(s));
+
+        // pre:  before BEGIN (e.g. SET FOREIGN_KEY_CHECKS = 0)
+        // body: between BEGIN and COMMIT/ROLLBACK (the actual user statements)
+        // post: after COMMIT/ROLLBACK (e.g. SET FOREIGN_KEY_CHECKS = 1)
+        let pre  = &main[..begin_idx.unwrap_or(main.len())];
+        let body = match (begin_idx, end_idx) {
+            (Some(b), Some(e)) if e > b => &main[b + 1..e],
+            (Some(b), _)                => &main[b + 1..],
+            _                           => &main[..],
+        };
+        let post = match end_idx {
+            Some(e) => &main[e + 1..],
+            None    => &main[main.len()..],
+        };
+
         let mut conn = self.0.acquire().await.map_err(DbError::Sqlx)?;
-        let mut count = 0;
-        for (idx, stmt) in main.iter().enumerate() {
+        let mut count = 0usize;
+
+        // ── Phase 1: pre-transaction statements ──────────────────────────────
+        for (idx, stmt) in pre.iter().enumerate() {
             if let Err(e) = sqlx::query(stmt).execute(&mut *conn).await {
-                for s in &on_error {
-                    let _ = sqlx::query(s).execute(&mut *conn).await;
-                }
                 return Err(stmt_error(DbError::Sqlx(e), idx + 1, stmt));
             }
             count += 1;
             if !on_stmt_done() {
-                for s in &on_error {
+                return Err(DbError::Cancelled);
+            }
+        }
+
+        // ── Phase 2: transaction body ────────────────────────────────────────
+        let pre_len = pre.len();
+        if begin_idx.is_some() {
+            count += 1; // account for the BEGIN statement itself
+            if !on_stmt_done() {
+                return Err(DbError::Cancelled);
+            }
+
+            let mut tx = conn.begin().await.map_err(DbError::Sqlx)?;
+            let mut body_err: Option<(DbError, usize, String)> = None;
+            let mut cancelled = false;
+
+            for (i, stmt) in body.iter().enumerate() {
+                let global_idx = pre_len + 1 + i + 1; // 1-based
+                if let Err(e) = sqlx::query(stmt).execute(&mut *tx).await {
+                    body_err = Some((DbError::Sqlx(e), global_idx, stmt.clone()));
+                    break;
+                }
+                count += 1;
+                if !on_stmt_done() {
+                    cancelled = true;
+                    break;
+                }
+            }
+
+            if body_err.is_some() || cancelled {
+                let _ = tx.rollback().await;
+                // on_error non-tx statements run after conn is free (tx consumed)
+                if let Some((e, idx, stmt)) = body_err {
+                    for s in on_error.iter().filter(|s| !is_begin(s) && !is_end(s)) {
+                        let _ = sqlx::query(s).execute(&mut *conn).await;
+                    }
+                    return Err(stmt_error(e, idx, &stmt));
+                }
+                for s in on_error.iter().filter(|s| !is_begin(s) && !is_end(s)) {
                     let _ = sqlx::query(s).execute(&mut *conn).await;
                 }
                 return Err(DbError::Cancelled);
             }
+
+            tx.commit().await.map_err(DbError::Sqlx)?;
+            // tx consumed — conn borrow released
+
+            count += 1; // account for the COMMIT statement
+            if !on_stmt_done() {
+                return Err(DbError::Cancelled);
+            }
         }
+
+        // ── Phase 3: post-transaction statements ────────────────────────────
+        let post_start = pre.len() + begin_idx.map_or(0, |_| 1) + body.len() + end_idx.map_or(0, |_| 1);
+        for (i, stmt) in post.iter().enumerate() {
+            let global_idx = post_start + i + 1;
+            if let Err(e) = sqlx::query(stmt).execute(&mut *conn).await {
+                return Err(stmt_error(DbError::Sqlx(e), global_idx, stmt));
+            }
+            count += 1;
+            if !on_stmt_done() {
+                return Err(DbError::Cancelled);
+            }
+        }
+
         Ok(count)
     }
 

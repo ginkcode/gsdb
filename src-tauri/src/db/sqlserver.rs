@@ -435,6 +435,29 @@ impl Driver for SqlServerDriver {
     async fn get_table_definition(&self, table_name: &str) -> Result<String, DbError> {
         let mut conn = self.pool.get().await.map_err(|e| DbError::Config(e.to_string()))?;
 
+        // Reject system-shipped tables — they contain server-internal computed columns
+        // and UDF references that cannot be recreated by a plain CREATE TABLE.
+        let shipped_sql = format!(
+            "SELECT is_ms_shipped FROM sys.objects WHERE name = '{}' AND type IN ('U', 'V')",
+            table_name.replace('\'', "''")
+        );
+        let shipped_rows = conn
+            .simple_query(&shipped_sql)
+            .await
+            .map_err(|e| DbError::Config(e.to_string()))?
+            .into_first_result()
+            .await
+            .map_err(|e| DbError::Config(e.to_string()))?;
+        if let Some(row) = shipped_rows.first() {
+            let is_shipped: bool = row.get::<bool, _>(0).unwrap_or(false);
+            if is_shipped {
+                return Err(DbError::Config(format!(
+                    "Cannot export '{}': it is a system-shipped object containing server-internal definitions that cannot be reproduced.",
+                    table_name
+                )));
+            }
+        }
+
         // First check if this is a view
         let view_sql = format!(
             "SELECT OBJECT_DEFINITION(OBJECT_ID('{}', 'V'))",

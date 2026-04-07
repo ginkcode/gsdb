@@ -4,6 +4,7 @@
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
+  import { Checkbox } from "$lib/components/ui/checkbox";
   import type { SchemaGraph } from "$lib/types";
 
   let {
@@ -130,11 +131,10 @@
               <label
                 class="flex items-center gap-2.5 px-2 py-1.5 rounded cursor-pointer hover:bg-accent/50 text-sm"
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={selected.has(table.name)}
-                  onchange={() => toggle(table.name)}
-                  class="accent-primary w-3.5 h-3.5 shrink-0"
+                  onCheckedChange={() => toggle(table.name)}
+                  aria-label={table.name}
                 />
                 <span class="truncate flex-1 min-w-0" title={table.name}
                   >{table.name}</span

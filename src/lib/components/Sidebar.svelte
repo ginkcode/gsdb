@@ -785,7 +785,7 @@
 
   <!-- Export Progress Dialog -->
   <Dialog.Root bind:open={exportProgressOpen}>
-    <Dialog.Content class="sm:max-w-md">
+    <Dialog.Content class="sm:max-w-md" interactOutsideBehavior="ignore">
       <Dialog.Header>
         <Dialog.Title>Exporting Database</Dialog.Title>
         <Dialog.Description>

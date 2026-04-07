@@ -68,6 +68,27 @@ fn topological_sort(tables: &[String], fk_edges: &[(String, String)]) -> Vec<Str
     sorted
 }
 
+fn tx_begin(dialect: Dialect) -> &'static str {
+    match dialect {
+        Dialect::SqlServer => "BEGIN TRANSACTION",
+        _ => "BEGIN",
+    }
+}
+
+fn tx_commit(dialect: Dialect) -> &'static str {
+    match dialect {
+        Dialect::SqlServer => "COMMIT TRANSACTION",
+        _ => "COMMIT",
+    }
+}
+
+fn tx_rollback(dialect: Dialect) -> &'static str {
+    match dialect {
+        Dialect::SqlServer => "ROLLBACK TRANSACTION",
+        _ => "ROLLBACK",
+    }
+}
+
 fn quote_ident(name: &str, backtick: bool) -> String {
     if backtick {
         format!("`{}`", name)
@@ -291,9 +312,10 @@ impl DbPool {
     /// Standalone single-table export: DDL then data, wrapped in one transaction.
     pub async fn export_table_sql(&self, table_name: &str) -> Result<String, DbError> {
         let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+        let dialect = self.dialect();
         let mut out = format!(
-            "-- GSDB SQL Export\n-- Driver: {}\n-- Table: {}\n-- Generated: {}\n\nBEGIN;\n\n",
-            self.driver_name(), table_name, timestamp
+            "-- GSDB SQL Export\n-- Driver: {}\n-- Table: {}\n-- Generated: {}\n\n{};\n\n",
+            self.driver_name(), table_name, timestamp, tx_begin(dialect)
         );
 
         // Custom types used by this table (safe idempotent variant)
@@ -304,7 +326,7 @@ impl DbPool {
 
         out.push_str(&self.table_ddl(table_name).await?);
         out.push_str(&self.table_inserts(table_name).await?);
-        out.push_str("COMMIT;\n");
+        out.push_str(&format!("{};\n", tx_commit(dialect)));
         Ok(out)
     }
 
@@ -344,6 +366,7 @@ impl DbPool {
 
         on_progress(ExportProgress::Started { total_tables: sorted_tables.len() });
 
+        let dialect = self.dialect();
         let mut out = format!(
             "-- GSDB SQL Export\n-- Driver: {}\n-- Generated: {}\n\n",
             self.driver_name(), timestamp
@@ -360,7 +383,7 @@ impl DbPool {
             }
         }
 
-        out.push_str("BEGIN;\n\n");
+        out.push_str(&format!("{};\n\n", tx_begin(dialect)));
 
         // Section 1: All DDL first (per-table structure flag)
         if any_structure {
@@ -393,7 +416,7 @@ impl DbPool {
             }
         }
 
-        out.push_str("COMMIT;\n");
+        out.push_str(&format!("{};\n", tx_commit(dialect)));
         Ok(out)
     }
 
@@ -417,9 +440,10 @@ impl DbPool {
 
         on_progress(ExportProgress::Started { total_tables: sorted_table_names.len() });
 
+        let dialect = self.dialect();
         let mut out = format!(
-            "-- GSDB SQL Export\n-- Driver: {}\n-- Generated: {}\n\nBEGIN;\n\n",
-            self.driver_name(), timestamp
+            "-- GSDB SQL Export\n-- Driver: {}\n-- Generated: {}\n\n{};\n\n",
+            self.driver_name(), timestamp, tx_begin(dialect)
         );
 
         // ── Section 1: Custom types ──────────────────────────────────────────
@@ -465,7 +489,7 @@ impl DbPool {
             out.push_str("\n\n");
         }
 
-        out.push_str("COMMIT;\n");
+        out.push_str(&format!("{};\n", tx_commit(dialect)));
         Ok(out)
     }
 
@@ -495,9 +519,15 @@ impl DbPool {
             Dialect::SqlServer => "EXEC sp_MSforeachtable 'ALTER TABLE ? CHECK CONSTRAINT ALL'",
         };
 
+        let dialect = self.dialect();
         let has_own_tx = user_stmts
             .iter()
-            .any(|s| s.trim_start().to_uppercase().starts_with("BEGIN"));
+            .any(|s| {
+                let upper = s.trim_start().to_uppercase();
+                upper.starts_with("BEGIN TRANSACTION")
+                    || upper.starts_with("BEGIN TRAN")
+                    || (upper.starts_with("BEGIN") && !upper.starts_with("BEGIN "))
+            });
 
         // Build the full statement list to run on a single connection.
         // Prefix (FK disable, BEGIN) → user statements → suffix (COMMIT, FK enable).
@@ -506,14 +536,14 @@ impl DbPool {
             main.push(fk_disable.to_string());
         }
         if !has_own_tx {
-            main.push("BEGIN".to_string());
+            main.push(tx_begin(dialect).to_string());
         }
         let prefix = main.len(); // how many non-user statements are at the front
 
         main.extend(user_stmts);
 
         if !has_own_tx {
-            main.push("COMMIT".to_string());
+            main.push(tx_commit(dialect).to_string());
         }
         if disable_fk_checks {
             main.push(fk_enable.to_string());
@@ -523,7 +553,7 @@ impl DbPool {
         // These run on the SAME connection so they actually take effect.
         let mut on_error: Vec<String> = Vec::new();
         if !has_own_tx {
-            on_error.push("ROLLBACK".to_string());
+            on_error.push(tx_rollback(dialect).to_string());
         }
         if disable_fk_checks {
             on_error.push(fk_enable.to_string());
