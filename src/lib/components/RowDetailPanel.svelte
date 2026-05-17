@@ -16,6 +16,7 @@
     tableName,
     driver = "postgres",
     locked = false,
+    tabId,
     onClose,
     onUpdateSuccess,
     onQueryExecuted,
@@ -28,6 +29,7 @@
     tableName?: string;
     driver?: DbDriver;
     locked?: boolean;
+    tabId?: string;
     onClose: () => void;
     onUpdateSuccess?: () => void;
     onQueryExecuted?: (sql: string, success: boolean, error?: string) => void;
@@ -217,7 +219,7 @@
     const sql = `UPDATE ${quoteIdentifier(tableName)} SET ${setClauses.join(", ")} WHERE ${whereClauses.join(" AND ")}`;
 
     try {
-      await invoke("run_query", { connectionId, sql });
+      await invoke("run_query", { connectionId, tabId, sql });
       for (const col of changedCols) {
         baseRow![col] = nullFields[col] ? null : editedValues[col];
       }

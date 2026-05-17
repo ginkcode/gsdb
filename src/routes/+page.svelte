@@ -374,6 +374,7 @@
                 locked={$connections.find(
                   (c) => c.id === $activeTab?.connectionId,
                 )?.locked ?? false}
+                tabId={$activeTab?.id}
                 onClose={handleCloseDetailPanel}
                 onUpdateSuccess={() => {
                   if ($activeTab) {
