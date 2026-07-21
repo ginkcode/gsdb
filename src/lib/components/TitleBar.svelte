@@ -109,6 +109,11 @@
   const WIN_BTN = `${CAPTION_BTN} h-full w-[46px] text-foreground/80 hover:bg-foreground/10 active:bg-foreground/[0.06]`;
   const WIN_CLOSE = `${CAPTION_BTN} h-full w-[46px] text-foreground/80 hover:bg-[#c42b1c] hover:text-white active:bg-[#c42b1c]/85`;
 
+  // macOS traffic lights carry a faint dark rim; without it they read as flat dots.
+  const TRAFFIC =
+    "h-3 w-3 rounded-full flex items-center justify-center outline-none " +
+    "shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.22)]";
+
   // Linux (Adwaita/Breeze): 24px pills with a resting surface.
   const NIX_BTN = `${CAPTION_BTN} h-6 w-6 rounded-full bg-foreground/[0.08] text-foreground/75 hover:bg-foreground/20 hover:text-foreground active:bg-foreground/25`;
   const NIX_CLOSE = `${CAPTION_BTN} h-6 w-6 rounded-full bg-foreground/[0.08] text-foreground/75 hover:bg-[#c42b1c] hover:text-white active:bg-[#c42b1c]/85`;
@@ -201,10 +206,11 @@
   </svg>
 {/snippet}
 
+<!-- macOS title bars are 28px; Windows/Linux run taller -->
 <header
-  class="relative h-10 shrink-0 flex items-center bg-background border-b border-border select-none {isFocused
-    ? ''
-    : 'opacity-90'}"
+  class="relative shrink-0 flex items-center bg-background border-b select-none {isMac
+    ? 'h-7 border-black/20 dark:border-white/[0.07]'
+    : 'h-10 border-border'} {isFocused ? '' : 'opacity-90'}"
   role="toolbar"
   tabindex="-1"
   onmousedown={startDrag}
@@ -214,9 +220,7 @@
     <div class="group/traffic flex items-center gap-2 pl-[13px] pr-3">
       <button
         type="button"
-        class="h-3 w-3 rounded-full flex items-center justify-center outline-none {isFocused
-          ? 'bg-[#ff5f57]'
-          : 'bg-foreground/20'}"
+        class="{TRAFFIC} {isFocused ? 'bg-[#ff5f57]' : 'bg-foreground/20'}"
         aria-label="Close window"
         onclick={close}
       >
@@ -224,9 +228,7 @@
       </button>
       <button
         type="button"
-        class="h-3 w-3 rounded-full flex items-center justify-center outline-none {isFocused
-          ? 'bg-[#febc2e]'
-          : 'bg-foreground/20'}"
+        class="{TRAFFIC} {isFocused ? 'bg-[#febc2e]' : 'bg-foreground/20'}"
         aria-label="Minimize window"
         onclick={minimize}
       >
@@ -234,9 +236,7 @@
       </button>
       <button
         type="button"
-        class="h-3 w-3 rounded-full flex items-center justify-center outline-none {isFocused
-          ? 'bg-[#28c840]'
-          : 'bg-foreground/20'}"
+        class="{TRAFFIC} {isFocused ? 'bg-[#28c840]' : 'bg-foreground/20'}"
         aria-label={isMaximized ? "Restore window" : "Maximize window"}
         onclick={maximize}
       >
