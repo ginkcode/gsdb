@@ -11,3 +11,4 @@ vite.config.ts.timestamp-*
 /.claude
 /ISSUES.md
 /docker-compose.yml
+.idea
