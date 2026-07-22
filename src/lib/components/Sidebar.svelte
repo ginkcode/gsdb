@@ -4,12 +4,13 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import type { Snippet } from "svelte";
   import { toast } from "svelte-sonner";
-  import { Plus, Database } from "@lucide/svelte";
+  import { Plus, Database, Menu, Coffee } from "@lucide/svelte";
   import { save, open } from "@tauri-apps/plugin-dialog";
   import { downloadDir } from "@tauri-apps/api/path";
   import { Button } from "$lib/components/ui/button";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
   import * as Dialog from "$lib/components/ui/dialog";
+  import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
   import {
     connections,
     activeConnectionId,
@@ -48,9 +49,12 @@
   } = $props();
 
   const RELEASES_URL = "https://github.com/ginkcode/gsdb/releases/latest";
+  const REPO_URL = "https://github.com/ginkcode/gsdb";
+  const DONATE_URL = "https://buymeacoffee.com/ginkcode";
 
   let appVersion = $state("");
   let updateAvailable = $state(false);
+  let aboutDialogOpen = $state(false);
 
   function isNewerVersion(latest: string, current: string): boolean {
     const lp = latest.split(".").map(Number);
@@ -615,8 +619,19 @@
   <div
     class="flex items-center justify-between px-4 py-3 border-b border-border"
   >
-    <div class="flex items-center gap-2">
-      <Database class="w-4 h-4 text-primary" />
+    <div class="flex items-center gap-1">
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger>
+          <Button variant="ghost" size="icon" class="h-7 w-7" title="Menu">
+            <Menu class="w-4 h-4 text-primary" />
+          </Button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Content align="start" class="min-w-44">
+          <DropdownMenu.Item onSelect={() => (aboutDialogOpen = true)}>
+            About GSDB
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Root>
       <span class="text-sm font-semibold tracking-tight">GSDB</span>
     </div>
     <div class="flex items-center gap-1">
@@ -857,6 +872,46 @@
           >
         {/if}
       </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <Dialog.Root bind:open={aboutDialogOpen}>
+    <Dialog.Content class="sm:max-w-sm">
+      <Dialog.Header class="items-center text-center">
+        <div
+          class="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-1"
+        >
+          <Database class="w-6 h-6 text-primary" />
+        </div>
+        <Dialog.Title>GSDB</Dialog.Title>
+        <Dialog.Description>
+          {#if appVersion}Version {appVersion}{/if}
+        </Dialog.Description>
+      </Dialog.Header>
+      <p class="text-sm text-muted-foreground text-center">
+        A lightweight desktop database management tool.
+      </p>
+      <div class="flex items-center justify-center gap-2 pt-1">
+        <Button variant="outline" size="sm" onclick={() => openUrl(REPO_URL)}>
+          GitHub
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onclick={() => openUrl(RELEASES_URL)}
+        >
+          Release Notes
+        </Button>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        class="w-full gap-1.5 text-amber-600 dark:text-amber-500 border-amber-600/30 hover:bg-amber-500/10 hover:text-amber-600 dark:hover:text-amber-500"
+        onclick={() => openUrl(DONATE_URL)}
+      >
+        <Coffee class="w-3.5 h-3.5" />
+        Buy Me a Coffee
+      </Button>
     </Dialog.Content>
   </Dialog.Root>
 
