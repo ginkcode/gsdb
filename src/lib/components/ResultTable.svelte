@@ -162,7 +162,7 @@
             {@const i = startIndex + localIdx}
             <tr
               style="height: {ROW_HEIGHT}px;"
-              class="border-b border-border/40 transition-colors cursor-pointer
+              class="border-b border-border/60 transition-colors cursor-pointer
                 {isRowSelected(row)
                   ? 'bg-accent'
                   : i % 2 === 0
@@ -171,12 +171,12 @@
               onclick={() => onRowSelect(row)}
             >
               <td
-                class="px-2 py-1.5 text-right text-xs text-muted-foreground/40 border-r border-border/40 select-none tabular-nums"
+                class="px-2 py-1.5 text-right text-xs text-muted-foreground/40 border-r border-border/60 select-none tabular-nums"
               >{i + 1}</td>
               {#each result.columns as col}
                 {@const value = formatValue(row[col])}
                 {@const truncated = truncateText(value)}
-                <td class="px-3 py-1.5 border-r border-border/40 max-w-xs">
+                <td class="px-3 py-1.5 border-r border-border/60 max-w-xs">
                   {#if row[col] === null || row[col] === undefined}
                     <span class="text-muted-foreground/60 italic text-xs">NULL</span>
                   {:else if truncated.truncated}

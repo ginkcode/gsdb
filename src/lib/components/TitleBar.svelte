@@ -208,9 +208,9 @@
 
 <!-- macOS title bars are 28px; Windows/Linux run taller -->
 <header
-  class="relative shrink-0 flex items-center bg-background border-b select-none {isMac
-    ? 'h-7 border-black/20 dark:border-white/[0.07]'
-    : 'h-10 border-border'} {isFocused ? '' : 'opacity-90'}"
+  class="relative shrink-0 flex items-center bg-background border-b border-border select-none {isMac
+    ? 'h-7'
+    : 'h-10'} {isFocused ? '' : 'opacity-90'}"
   role="toolbar"
   tabindex="-1"
   onmousedown={startDrag}

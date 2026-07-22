@@ -84,7 +84,7 @@
           tabindex="0"
           class="group flex items-center gap-2 px-4 py-2.5 text-xs border-r border-border transition-colors shrink-0 cursor-pointer select-none whitespace-nowrap h-full
             {$activeTabId === tab.id
-            ? 'bg-muted text-foreground border-b-2 border-b-primary -mb-px'
+            ? 'bg-muted text-foreground -mb-px shadow-[inset_0_2px_0_0_var(--primary)]'
             : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}"
           onclick={() => activeTabId.set(tab.id)}
           ondblclick={() => makeTabPermanent(tab.id)}
